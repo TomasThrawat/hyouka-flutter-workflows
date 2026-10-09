@@ -341,7 +341,32 @@ jobs:
           TARGET_PLATFORM: ${{ inputs.target-platform }}
         run: |
           set -o pipefail
-          flutter build apk --release --target-platform "$TARGET_PLATFORM" --no-pub 2>&1 | tee ci-reports/flutter-build-apk.log
+          OUTPUT_DIR="build/app/outputs/flutter-apk"
+          mkdir -p "$OUTPUT_DIR"
+          rm -f "$OUTPUT_DIR/app-release.apk"
+          flutter build apk --release --target-platform "$TARGET_PLATFORM" --split-per-abi --no-pub 2>&1 | tee ci-reports/flutter-build-apk.log
+
+          case "$TARGET_PLATFORM" in
+            android-arm64) EXPECTED_ABI="arm64-v8a" ;;
+            android-arm) EXPECTED_ABI="armeabi-v7a" ;;
+            android-x64) EXPECTED_ABI="x86_64" ;;
+            android-riscv64) EXPECTED_ABI="riscv64" ;;
+            *)
+              echo "::error::Unsupported single release target platform: $TARGET_PLATFORM"
+              exit 1
+              ;;
+          esac
+
+          SELECTED_APK="$OUTPUT_DIR/app-$EXPECTED_ABI-release.apk"
+          if [[ ! -s "$SELECTED_APK" ]]; then
+            echo "::error::Flutter did not produce the expected split APK: $SELECTED_APK"
+            find "$OUTPUT_DIR" -maxdepth 1 -type f -printf '%f (%s bytes)\\n' | sort
+            exit 1
+          fi
+          cp "$SELECTED_APK" "$OUTPUT_DIR/app-release.apk"
+          echo "Selected target APK: $SELECTED_APK"
+          echo "Normalized release APK: $OUTPUT_DIR/app-release.apk"
+          echo "Selected ABI: $EXPECTED_ABI" | tee ci-reports/apk-selected-abi.txt
 
       - name: Verify complete APK archive and inventory all entries
         id: apk-inventory

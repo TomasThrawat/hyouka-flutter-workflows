@@ -18,6 +18,9 @@ required_contract = [
     "Snapshot complete source before security inspection",
     "Refresh Android plugin registration after dependency resolution",
     "flutter build apk --config-only",
+    "--split-per-abi",
+    "app-$EXPECTED_ABI-release.apk",
+    "APK ABI selection must map the requested target to one split APK",
     "actions/cache/restore@v5",
     "actions/cache/save@v5",
     "Restore previous build history",
@@ -43,6 +46,9 @@ assert source.index("Get dependencies") < source.index("Refresh Android plugin r
 assert "actions/cache/restore@v4" not in source, "Cache restore must use the Node 24-compatible v5 action"
 assert "actions/cache/save@v4" not in source, "Cache save must use the Node 24-compatible v5 action"
 assert "flutter build --config-only" not in source, "Config-only refresh must be invoked through a supported Flutter build target"
+assert "--split-per-abi" in source, "Target-platform builds must package an ABI-specific APK"
+assert 'app-$EXPECTED_ABI-release.apk' in source, "The workflow must select the APK matching the requested ABI"
+assert source.index("Refresh Android plugin registration after dependency resolution") < source.index("Build Android release APK") < source.index("Verify APK, signature, and ABI"), "Android config, build, and verification order must remain valid"
 assert source.index("Verify complete APK archive and inventory all entries") < source.index("Verify APK, signature, and ABI")
 assert "flutter pub upgrade" not in source, "Workflow must never run flutter pub upgrade"
 assert 'flutter pub get --enforce-lockfile' in source, "Committed lockfiles must be enforced"
