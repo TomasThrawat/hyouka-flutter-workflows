@@ -111,7 +111,6 @@ jobs:
           channel: ${{ inputs.flutter-channel }}
           flutter-version: ${{ inputs.flutter-version }}
           cache: true
-          cache-dependency-path: pubspec.lock
 
       - name: Generate Android files when explicitly requested
         if: ${{ inputs.generate-android && inputs.build-apk && !cancelled() }}
@@ -343,7 +342,7 @@ jobs:
       - name: Set up Go for OSV-Scanner
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.2'
+          go-version: '1.27.0'
           cache: false
 
       - name: Install OSV-Scanner (free open-source CLI)

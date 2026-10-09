@@ -29,7 +29,7 @@ permissions:
 
 jobs:
   flutter-ci:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.0.1
     with:
       run-analyze: true
       run-tests: true
@@ -42,7 +42,7 @@ jobs:
       artifact-name: my-app-arm64-apk
 ```
 
-For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The `v1` tag is convenient for a major-version reference.
+For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.0.1` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
 
 ## Audit existing custom builds without replacing them
 
@@ -62,7 +62,7 @@ permissions:
 
 jobs:
   security-audit:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.0.1
     with:
       run-analyze: false
       run-tests: false
