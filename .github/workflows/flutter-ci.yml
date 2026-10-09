@@ -130,10 +130,10 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .ci-history
-          key: flutter-build-history-\${{ github.repository_id }}-\${{ github.ref_name }}-\${{ github.run_id }}-\${{ github.run_attempt }}
+          key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            flutter-build-history-\${{ github.repository_id }}-\${{ github.ref_name }}-
-            flutter-build-history-\${{ github.repository_id }}-\${{ github.event.repository.default_branch }}-
+            flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-
+            flutter-build-history-${{ github.repository_id }}-${{ github.event.repository.default_branch }}-
 
       - name: Verify Flutter project
         shell: bash
@@ -177,7 +177,7 @@ jobs:
 
       - name: Report dependency graph and outdated packages without changing versions
         id: dependency-report
-        if: \${{ always() && steps.pub-get.outcome == 'success' }}
+        if: ${{ always() && steps.pub-get.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -186,7 +186,7 @@ jobs:
           deps_status=$?
           set +e
           flutter pub outdated --no-transitive 2>&1 | tee ci-reports/flutter-pub-outdated.log
-          outdated_status=\${PIPESTATUS[0]}
+          outdated_status=${PIPESTATUS[0]}
           set -e
           {
             echo "flutter pub deps exit code: $deps_status"
@@ -233,22 +233,22 @@ jobs:
 
       - name: Compare screenshot and golden baselines
         id: screenshot-tests
-        if: \${{ inputs.run-screenshot-tests && inputs.run-tests }}
+        if: ${{ inputs.run-screenshot-tests && inputs.run-tests }}
         shell: bash
         run: |
           set -euo pipefail
           mapfile -t files < <(grep -lER 'matchesGoldenFile|matchesReferenceImage' --include='*_test.dart' test 2>/dev/null || true)
-          if (( \${#files[@]} == 0 )); then
+          if (( ${#files[@]} == 0 )); then
             echo "No golden/screenshot matcher tests found; visual comparison skipped." | tee ci-reports/screenshot-tests.log
             exit 0
           fi
-          printf '%s\n' "\${files[@]}" | tee ci-reports/screenshot-test-files.txt
+          printf '%s\n' "${files[@]}" | tee ci-reports/screenshot-test-files.txt
           set -o pipefail
-          flutter test --no-pub "\${files[@]}" 2>&1 | tee ci-reports/screenshot-tests.log
+          flutter test --no-pub "${files[@]}" 2>&1 | tee ci-reports/screenshot-tests.log
 
       - name: Generate detailed coverage and uncovered-line report
         id: coverage-report
-        if: \${{ inputs.generate-coverage-report && inputs.run-tests && always() }}
+        if: ${{ inputs.generate-coverage-report && inputs.run-tests && always() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -326,7 +326,7 @@ jobs:
 
       - name: Verify complete APK archive and inventory all entries
         id: apk-inventory
-        if: \${{ inputs.build-apk }}
+        if: ${{ inputs.build-apk }}
         shell: bash
         run: |
           set -euo pipefail
@@ -389,18 +389,18 @@ jobs:
 
       - name: Collect full command logs and compare build history
         id: report-collector
-        if: \${{ always() }}
+        if: ${{ always() }}
         shell: bash
         env:
-          ANALYZE_RESULT: \${{ steps.analyze.outcome }}
-          TEST_RESULT: \${{ steps.tests.outcome }}
-          SCREENSHOT_RESULT: \${{ steps.screenshot-tests.outcome }}
-          COVERAGE_RESULT: \${{ steps.coverage-report.outcome }}
-          FORMAT_RESULT: \${{ steps.format.outcome }}
-          BUILD_RESULT: \${{ steps.build.outcome }}
-          APK_RESULT: \${{ steps.verify-apk.outcome }}
-          EMULATOR_RESULT: \${{ steps.emulator.outcome }}
-          PUB_GET_RESULT: \${{ steps.pub-get.outcome }}
+          ANALYZE_RESULT: ${{ steps.analyze.outcome }}
+          TEST_RESULT: ${{ steps.tests.outcome }}
+          SCREENSHOT_RESULT: ${{ steps.screenshot-tests.outcome }}
+          COVERAGE_RESULT: ${{ steps.coverage-report.outcome }}
+          FORMAT_RESULT: ${{ steps.format.outcome }}
+          BUILD_RESULT: ${{ steps.build.outcome }}
+          APK_RESULT: ${{ steps.verify-apk.outcome }}
+          EMULATOR_RESULT: ${{ steps.emulator.outcome }}
+          PUB_GET_RESULT: ${{ steps.pub-get.outcome }}
         run: |
           set -euo pipefail
           mkdir -p ci-reports .ci-history
@@ -462,15 +462,15 @@ jobs:
           cat ci-reports/build-history-comparison.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save build history for the next run
-        if: \${{ always() && steps.report-collector.outcome == 'success' }}
+        if: ${{ always() && steps.report-collector.outcome == 'success' }}
         continue-on-error: true
         uses: actions/cache/save@v4
         with:
           path: .ci-history
-          key: flutter-build-history-\${{ github.repository_id }}-\${{ github.ref_name }}-\${{ github.run_id }}-\${{ github.run_attempt }}
+          key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload Flutter reports and diagnostics
-        if: \${{ always() }}
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: flutter-ci-reports-${{ github.run_id }}
