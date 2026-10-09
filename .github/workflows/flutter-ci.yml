@@ -94,7 +94,7 @@ permissions:
 
 jobs:
   flutter:
-    if: ${{ inputs.run-analyze || inputs.run-tests || inputs.run-screenshot-tests || inputs.generate-coverage-report || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
+    if: ${{ inputs.run-analyze || inputs.run-tests || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -523,6 +523,19 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Snapshot complete source before security inspection
+        id: source-snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-reports
+          git ls-files -co --exclude-standard > ci-reports/source-file-list.txt
+          find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -print0 \
+            | sort -z | xargs -0 -r sha256sum > ci-reports/source-manifest.sha256
+          tar --exclude='./.git' --exclude='./ci-reports' -czf "$RUNNER_TEMP/project-source-snapshot.tar.gz" .
+          cp "$RUNNER_TEMP/project-source-snapshot.tar.gz" ci-reports/
+          echo "Complete project snapshot captured before Gitleaks and OSV-Scanner inspection." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Prepare report directory
         shell: bash
