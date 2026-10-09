@@ -5,7 +5,7 @@ A central, reusable GitHub Actions setup for Flutter projects. It uses the Flutt
 ## What the reusable workflow provides
 
 - Flutter dependency resolution, analysis that keeps errors/warnings fatal while allowing `info`-level lints, unit/widget tests, optional Dart format checks, and a non-mutating `dart fix --dry-run` report.
-- Optional release APK build, signature check, ABI validation, SHA-256 report, and artifact upload. The default target is `android-arm64` (arm64-v8a).
+- Optional release APK build, explicit Android plugin-registration refresh after dependency resolution, signature check, ABI validation, SHA-256 report, and artifact upload. The default target is `android-arm64` (arm64-v8a).
 - Optional headless Android emulator execution for existing `integration_test/*_test.dart` tests.
 - Gitleaks scanning of the repository's Git history and OSV-Scanner scanning of supported dependency lockfiles, including `pubspec.lock`. Flutter dependency graph/outdated reports are informational and never run an automatic upgrade.
 - A complete source snapshot and SHA-256 file manifest captured before analysis, dependency resolution, or APK inspection.
@@ -34,7 +34,7 @@ permissions:
 
 jobs:
   flutter-ci:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.3
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.4
     with:
       run-analyze: true
       run-tests: true
@@ -47,7 +47,7 @@ jobs:
       artifact-name: my-app-arm64-apk
 ```
 
-For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.3` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
+For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.4` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
 
 ## Audit existing custom builds without replacing them
 
@@ -67,7 +67,7 @@ permissions:
 
 jobs:
   security-audit:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.3
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.4
     with:
       run-analyze: false
       run-tests: false

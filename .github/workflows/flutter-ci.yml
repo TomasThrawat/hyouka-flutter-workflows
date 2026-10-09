@@ -128,7 +128,7 @@ jobs:
       - name: Restore previous build history
         id: history-restore
         continue-on-error: true
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: .ci-history
           key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
@@ -325,6 +325,14 @@ jobs:
             fi
             flutter test integration_test --no-pub
 
+      - name: Refresh Android plugin registration after dependency resolution
+        id: config-only
+        if: ${{ inputs.build-apk }}
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter build --config-only 2>&1 | tee ci-reports/flutter-build-config.log
+
       - name: Build Android release APK
         id: build
         if: ${{ inputs.build-apk }}
@@ -481,7 +489,7 @@ jobs:
       - name: Save build history for the next run
         if: ${{ always() && steps.report-collector.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: .ci-history
           key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}

@@ -16,6 +16,10 @@ source = WORKFLOW.read_text(encoding="utf-8")
 required_contract = [
     "Snapshot the complete project before inspection",
     "Snapshot complete source before security inspection",
+    "Refresh Android plugin registration after dependency resolution",
+    "flutter build --config-only",
+    "actions/cache/restore@v5",
+    "actions/cache/save@v5",
     "Restore previous build history",
     "Generate detailed coverage and uncovered-line report",
     "Compare screenshot and golden baselines",
@@ -35,6 +39,9 @@ for marker in required_contract:
     assert marker in source, f"Required workflow capability missing: {marker}"
 
 assert source.index("Snapshot the complete project before inspection") < source.index("Get dependencies")
+assert source.index("Get dependencies") < source.index("Refresh Android plugin registration after dependency resolution") < source.index("Build Android release APK"), "Android plugin config must refresh after dependency resolution and before the APK build"
+assert "actions/cache/restore@v4" not in source, "Cache restore must use the Node 24-compatible v5 action"
+assert "actions/cache/save@v4" not in source, "Cache save must use the Node 24-compatible v5 action"
 assert source.index("Verify complete APK archive and inventory all entries") < source.index("Verify APK, signature, and ABI")
 assert "flutter pub upgrade" not in source, "Workflow must never run flutter pub upgrade"
 assert 'flutter pub get --enforce-lockfile' in source, "Committed lockfiles must be enforced"
