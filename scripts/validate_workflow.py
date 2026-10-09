@@ -23,6 +23,10 @@ required_contract = [
     "Verify APK, signature, and ABI",
     "Collect full command logs and compare build history",
     "Resolve missing Flutter lockfile for audit without committing changes",
+    "flutter pub get --enforce-lockfile",
+    "pubspec_lock_sha256",
+    "Dependency lock hash changed",
+    "Expected exactly arm64-v8a native libraries",
     "Collect all per-job reports and analyze logs",
     "flutter-complete-report-",
     "fail-on-security-findings",
@@ -33,6 +37,8 @@ for marker in required_contract:
 assert source.index("Snapshot the complete project before inspection") < source.index("Get dependencies")
 assert source.index("Verify complete APK archive and inventory all entries") < source.index("Verify APK, signature, and ABI")
 assert "flutter pub upgrade" not in source, "Workflow must never run flutter pub upgrade"
+assert 'flutter pub get --enforce-lockfile' in source, "Committed lockfiles must be enforced"
+assert 'flutter test --no-pub "${files[@]}"' not in source, "Golden tests must not run twice"
 assert "dart fix --apply" not in source, "Workflow must not auto-rewrite Dart files"
 assert "--update-goldens" not in source, "Workflow must not silently rewrite screenshot baselines"
 

@@ -173,8 +173,14 @@ jobs:
         id: pub-get
         shell: bash
         run: |
-          set -o pipefail
-          flutter pub get 2>&1 | tee ci-reports/flutter-pub-get.log
+          set -euo pipefail
+          if [[ -s pubspec.lock ]]; then
+            echo "Committed pubspec.lock found; enforcing exact locked dependency resolution."
+            flutter pub get --enforce-lockfile 2>&1 | tee ci-reports/flutter-pub-get.log
+          else
+            echo "No committed pubspec.lock; resolving dependencies from declared constraints without upgrading package constraints."
+            flutter pub get 2>&1 | tee ci-reports/flutter-pub-get.log
+          fi
 
       - name: Report dependency graph and outdated packages without changing versions
         id: dependency-report
@@ -244,8 +250,12 @@ jobs:
             exit 0
           fi
           printf '%s\n' "${files[@]}" | tee ci-reports/screenshot-test-files.txt
-          set -o pipefail
-          flutter test --no-pub "${files[@]}" 2>&1 | tee ci-reports/screenshot-tests.log
+          {
+            echo "Detected screenshot/golden matcher tests:"
+            printf '%s\n' "${files[@]}"
+            echo
+            echo "The complete Flutter test suite above already executed these tests. Not rerunning them to avoid duplicate execution; review flutter-test.log for actual matcher failures."
+          } | tee ci-reports/screenshot-tests.log
 
       - name: Generate detailed coverage and uncovered-line report
         id: coverage-report
@@ -406,7 +416,10 @@ jobs:
           set -euo pipefail
           mkdir -p ci-reports .ci-history
           apk_hash=""
+          lock_hash=""
           [[ ! -f build/app/outputs/flutter-apk/app-release.apk ]] || apk_hash="$(sha256sum build/app/outputs/flutter-apk/app-release.apk | awk '{print $1}')"
+          [[ ! -s pubspec.lock ]] || lock_hash="$(sha256sum pubspec.lock | awk '{print $1}')"
+          printf 'pubspec.lock SHA-256: %s\n' "${lock_hash:-not available}" | tee ci-reports/pubspec-lock-sha256.txt
           jq -cn \
             --arg repo "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF_NAME" --arg sha "$GITHUB_SHA" \
             --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
@@ -414,8 +427,8 @@ jobs:
             --arg pub "$PUB_GET_RESULT" --arg analyze "$ANALYZE_RESULT" --arg tests "$TEST_RESULT" \
             --arg screenshots "$SCREENSHOT_RESULT" --arg coverage "$COVERAGE_RESULT" \
             --arg format "$FORMAT_RESULT" --arg emulator "$EMULATOR_RESULT" \
-            --arg build "$BUILD_RESULT" --arg verify "$APK_RESULT" --arg apk_hash "$apk_hash" \
-            '{repository:$repo,ref:$ref,commit:$sha,run_id:$run,attempt:$attempt,date:$date,pub_get:$pub,analyze:$analyze,tests:$tests,screenshot_tests:$screenshots,coverage:$coverage,format:$format,emulator:$emulator,build:$build,apk_verify:$verify,apk_sha256:$apk_hash}' \
+            --arg build "$BUILD_RESULT" --arg verify "$APK_RESULT" --arg apk_hash "$apk_hash" --arg lock_hash "$lock_hash" \
+            '{repository:$repo,ref:$ref,commit:$sha,run_id:$run,attempt:$attempt,date:$date,pub_get:$pub,analyze:$analyze,tests:$tests,screenshot_tests:$screenshots,coverage:$coverage,format:$format,emulator:$emulator,build:$build,apk_verify:$verify,apk_sha256:$apk_hash,pubspec_lock_sha256:$lock_hash}' \
             >> .ci-history/history.jsonl
           cp .ci-history/history.jsonl ci-reports/build-history.jsonl
           python3 - <<'PY'
@@ -432,7 +445,10 @@ jobs:
                   lines.append(f"| {k} | {a} | {b} | {'changed' if a!=b else 'same'} |")
               lines += ["",f"- Previous APK SHA-256: {prev.get('apk_sha256') or 'not built'}",
                         f"- Current APK SHA-256: {cur.get('apk_sha256') or 'not built'}",
-                        f"- APK hash changed: {'yes' if prev.get('apk_sha256')!=cur.get('apk_sha256') else 'no'}"]
+                        f"- APK hash changed: {'yes' if prev.get('apk_sha256')!=cur.get('apk_sha256') else 'no'}",
+                        f"- Previous pubspec.lock SHA-256: {prev.get('pubspec_lock_sha256') or 'not available'}",
+                        f"- Current pubspec.lock SHA-256: {cur.get('pubspec_lock_sha256') or 'not available'}",
+                        f"- Dependency lock hash changed: {'yes' if prev.get('pubspec_lock_sha256')!=cur.get('pubspec_lock_sha256') else 'no'}"]
           else: lines += ["","No previous cache baseline was available; this run establishes it."]
           Path("ci-reports/build-history-comparison.md").write_text("\n".join(lines)+"\n")
           PY
