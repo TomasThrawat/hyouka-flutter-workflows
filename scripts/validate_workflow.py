@@ -42,7 +42,9 @@ required_contract = [
     "Dependency lock hash changed",
     "Expected exactly arm64-v8a native libraries",
     "Collect all per-job reports and analyze logs",
-    "actions/download-artifact@v8",
+    "gh run download",
+    "GH_TOKEN: ${{ github.token }}",
+    "actions: read",
     "No supported dependency lockfiles found; OSV dependency scan skipped.",
     "GITLEAKS_STATUS",
     "OSV_STATUS",
@@ -54,8 +56,11 @@ required_contract = [
 for marker in required_contract:
     assert marker in source, f"Required workflow capability missing: {marker}"
 
-assert "actions/download-artifact@v7" not in source, "Use the current artifact downloader with the updated artifact toolkit dependency"
-assert source.count("uses: actions/download-artifact@v8") == 1, "The unified reporter must have one explicit download-artifact v8 step"
+assert "actions/download-artifact@" not in source, "The unified reporter must avoid the Node-based artifact action that emits DEP0005"
+assert source.count('gh run download "$GITHUB_RUN_ID"') == 1, "The unified reporter must download current-run artifacts through GitHub CLI"
+assert "GH_TOKEN: ${{ github.token }}" in source, "GitHub CLI must receive the workflow token explicitly"
+assert "actions: read" in source, "The report job needs only read access to Actions artifacts"
+assert "if [[ \"$EXPECT_FLUTTER_REPORT\" == \"true\" || \"$EXPECT_SECURITY_REPORT\" == \"true\" ]]" in source, "Skip download cleanly when both report-producing jobs are disabled"
 for marker in ("GIT_CONFIG_COUNT: 2", "GIT_CONFIG_VALUE_0: main", "GIT_CONFIG_VALUE_1: false"):
     assert marker in validation_source, f"Validation workflow must suppress the obsolete Git default-branch hint: {marker}"
 

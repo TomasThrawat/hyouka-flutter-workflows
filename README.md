@@ -10,7 +10,7 @@ A central, reusable GitHub Actions setup for Flutter projects. It uses the Flutt
 - Gitleaks scanning of the repository's Git history and OSV-Scanner scanning of supported dependency lockfiles, including `pubspec.lock`. Flutter dependency graph/outdated reports are informational and never run an automatic upgrade.
 - A complete source snapshot and SHA-256 file manifest captured before analysis, dependency resolution, or APK inspection.
 - Build history cached between runs with comparison of check outcomes, APK SHA-256 hashes, and `pubspec.lock` SHA-256 hashes.
-- A unified report that combines the full command logs, dependency reports, coverage results, APK inventory, and build-history comparison. It uses `actions/download-artifact@v8`, verifies expected per-job reports were downloaded, and fails with a diagnostic when one is missing.
+- A unified report that combines the full command logs, dependency reports, coverage results, APK inventory, and build-history comparison. It downloads same-run artifacts through the GitHub CLI (avoiding the Node.js `DEP0005` warning from the artifact action), verifies expected per-job reports were downloaded, and fails with a diagnostic when one is missing. The caller grants `actions: read` only.
 - GitHub checkout initialization avoids the obsolete `master`-branch hint, and unified log analysis distinguishes Flutter's recurring duplicate-directory-watch message from application exceptions while preserving original logs.
 - Detailed test coverage reports: total coverage, per-file coverage, and exact uncovered executable lines. Offline regression tests cover empty and full coverage, first-run and unchanged build-history baselines, required versus optional artifacts, log classification, high-volume log caps, and long-line truncation.
 - Golden/screenshot test comparison when tests use Flutter golden matchers and checked-in baseline images; baselines are never updated automatically.
@@ -31,6 +31,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -64,6 +65,7 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:

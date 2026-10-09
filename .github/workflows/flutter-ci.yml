@@ -741,16 +741,25 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
+      actions: read
       contents: read
     steps:
       - name: Download all Flutter and security report artifacts
         id: download-reports
         continue-on-error: true
-        uses: actions/download-artifact@v8
-        with:
-          pattern: flutter-*-reports-${{ github.run_id }}
-          path: combined-reports/jobs
-          merge-multiple: false
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECT_FLUTTER_REPORT: ${{ inputs.run-analyze || inputs.run-tests || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
+          EXPECT_SECURITY_REPORT: ${{ inputs.run-security-audit }}
+        run: |
+          set -euo pipefail
+          mkdir -p combined-reports/jobs
+          if [[ "$EXPECT_FLUTTER_REPORT" == "true" || "$EXPECT_SECURITY_REPORT" == "true" ]]; then
+            gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern "flutter-*-reports-$GITHUB_RUN_ID" --dir combined-reports/jobs
+          else
+            echo "No report-producing jobs were requested; artifact download skipped."
+          fi
 
       - name: Analyze logs and generate unified report
         if: ${{ always() }}
