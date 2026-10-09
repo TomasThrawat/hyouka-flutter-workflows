@@ -23,6 +23,16 @@ on:
         type: boolean
         required: false
         default: true
+      run-screenshot-tests:
+        description: Compare golden/screenshot tests against checked-in baselines when present.
+        type: boolean
+        required: false
+        default: true
+      generate-coverage-report:
+        description: Create detailed per-file coverage and uncovered-line reports.
+        type: boolean
+        required: false
+        default: true
       check-format:
         description: Fail if Dart files under lib or test are not formatted.
         type: boolean
@@ -84,7 +94,7 @@ permissions:
 
 jobs:
   flutter:
-    if: ${{ inputs.run-analyze || inputs.run-tests || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
+    if: ${{ inputs.run-analyze || inputs.run-tests || inputs.run-screenshot-tests || inputs.generate-coverage-report || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -94,6 +104,36 @@ jobs:
         uses: actions/checkout@v7
         with:
           persist-credentials: false
+
+      - name: Snapshot the complete project before inspection
+        id: source-snapshot
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ci-reports
+          test -f .git/HEAD
+          git ls-files -co --exclude-standard > ci-reports/source-file-list.txt
+          find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -print0 \
+            | sort -z | xargs -0 -r sha256sum > ci-reports/source-manifest.sha256
+          tar --exclude='./.git' --exclude='./ci-reports' -czf "$RUNNER_TEMP/project-source-snapshot.tar.gz" .
+          cp "$RUNNER_TEMP/project-source-snapshot.tar.gz" ci-reports/
+          {
+            echo "## Complete source snapshot"
+            echo "- Files tracked/untracked: $(wc -l < ci-reports/source-file-list.txt)"
+            echo "- SHA-256 entries: $(wc -l < ci-reports/source-manifest.sha256)"
+            echo "Full checkout captured before dependency resolution or analysis."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Restore previous build history
+        id: history-restore
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: .ci-history
+          key: flutter-build-history-\${{ github.repository_id }}-\${{ github.ref_name }}-\${{ github.run_id }}-\${{ github.run_attempt }}
+          restore-keys: |
+            flutter-build-history-\${{ github.repository_id }}-\${{ github.ref_name }}-
+            flutter-build-history-\${{ github.repository_id }}-\${{ github.event.repository.default_branch }}-
 
       - name: Verify Flutter project
         shell: bash
@@ -135,6 +175,26 @@ jobs:
           set -o pipefail
           flutter pub get 2>&1 | tee ci-reports/flutter-pub-get.log
 
+      - name: Report dependency graph and outdated packages without changing versions
+        id: dependency-report
+        if: \${{ always() && steps.pub-get.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -uo pipefail
+          flutter pub deps --style=compact > ci-reports/flutter-dependency-tree.txt 2>&1
+          deps_status=$?
+          set +e
+          flutter pub outdated --no-transitive 2>&1 | tee ci-reports/flutter-pub-outdated.log
+          outdated_status=\${PIPESTATUS[0]}
+          set -e
+          {
+            echo "flutter pub deps exit code: $deps_status"
+            echo "flutter pub outdated exit code: $outdated_status"
+            echo "Dependency versions were not changed."
+          } > ci-reports/flutter-dependency-report.log
+          exit "$deps_status"
+
       - name: Analyze Dart code
         id: analyze
         if: ${{ inputs.run-analyze }}
@@ -170,6 +230,62 @@ jobs:
           else
             echo "No Dart test files found under test/; unit/widget tests skipped." | tee ci-reports/flutter-test.log
           fi
+
+      - name: Compare screenshot and golden baselines
+        id: screenshot-tests
+        if: \${{ inputs.run-screenshot-tests && inputs.run-tests }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(grep -lER 'matchesGoldenFile|matchesReferenceImage' --include='*_test.dart' test 2>/dev/null || true)
+          if (( \${#files[@]} == 0 )); then
+            echo "No golden/screenshot matcher tests found; visual comparison skipped." | tee ci-reports/screenshot-tests.log
+            exit 0
+          fi
+          printf '%s\n' "\${files[@]}" | tee ci-reports/screenshot-test-files.txt
+          set -o pipefail
+          flutter test --no-pub "\${files[@]}" 2>&1 | tee ci-reports/screenshot-tests.log
+
+      - name: Generate detailed coverage and uncovered-line report
+        id: coverage-report
+        if: \${{ inputs.generate-coverage-report && inputs.run-tests && always() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! -s coverage/lcov.info ]]; then
+            echo "No coverage/lcov.info; no test coverage data exists." | tee ci-reports/coverage-report.log
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          files=[]; cur=None
+          for line in Path("coverage/lcov.info").read_text(errors="replace").splitlines():
+              if line.startswith("SF:"):
+                  cur={"file":line[3:],"hit":0,"found":0,"uncovered":[]}; files.append(cur)
+              elif cur is not None and line.startswith("DA:"):
+                  p=line[3:].split(",")
+                  if len(p)>1:
+                      n,c=int(p[0]),int(p[1]); cur["found"]+=1; cur["hit"]+=int(c>0)
+                      if c==0: cur["uncovered"].append(n)
+              elif cur is not None and line.startswith("LF:"): cur["found"]=max(cur["found"],int(line[3:]))
+              elif cur is not None and line.startswith("LH:"): cur["hit"]=int(line[3:])
+          found=sum(x["found"] for x in files); hit=sum(x["hit"] for x in files)
+          pct=100*hit/found if found else 0
+          report=["# Test coverage", "", f"- Lines covered: {hit}/{found} ({pct:.2f}%)",
+                  f"- Files with coverage: {len(files)}",
+                  f"- Uncovered executable lines: {sum(len(x['uncovered']) for x in files)}", "",
+                  "| File | Covered | Total | Percent | Uncovered lines |","|---|---:|---:|---:|---|"]
+          uncovered=[]
+          for x in files:
+              ratio=100*x["hit"]/x["found"] if x["found"] else 0
+              report.append(f"| {x['file']} | {x['hit']} | {x['found']} | {ratio:.2f}% | {', '.join(map(str,x['uncovered'])) or 'none'} |")
+              if x["uncovered"]: uncovered.append(f"{x['file']}: {', '.join(map(str,x['uncovered']))}")
+          Path("ci-reports/coverage-summary.md").write_text("\n".join(report)+"\n")
+          Path("ci-reports/uncovered-lines.txt").write_text("\n".join(uncovered)+"\n")
+          Path("ci-reports/coverage.json").write_text(json.dumps({"covered_lines":hit,"total_lines":found,"coverage_percent":round(pct,2),"files":files},indent=2))
+          print(f"Coverage: {hit}/{found} lines ({pct:.2f}%).")
+          PY
 
       - name: Report suggested safe Dart fixes (does not modify source)
         id: fix-report
@@ -207,6 +323,24 @@ jobs:
         run: |
           set -o pipefail
           flutter build apk --release --target-platform "$TARGET_PLATFORM" --no-pub 2>&1 | tee ci-reports/flutter-build-apk.log
+
+      - name: Verify complete APK archive and inventory all entries
+        id: apk-inventory
+        if: \${{ inputs.build-apk }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          test -s "$APK"
+          unzip -t "$APK" > ci-reports/apk-archive-integrity.log
+          unzip -Z1 "$APK" > ci-reports/apk-contents.txt
+          zipinfo -l "$APK" > ci-reports/apk-file-details.txt
+          mkdir -p "$RUNNER_TEMP/apk-complete"
+          unzip -q "$APK" -d "$RUNNER_TEMP/apk-complete"
+          find "$RUNNER_TEMP/apk-complete" -type f -print0 | sort -z | xargs -0 -r sha256sum > ci-reports/apk-extracted-sha256.txt
+          echo "Archive entries: $(wc -l < ci-reports/apk-contents.txt)" | tee ci-reports/apk-inventory-summary.txt
+          echo "Extracted files: $(wc -l < ci-reports/apk-extracted-sha256.txt)" | tee -a ci-reports/apk-inventory-summary.txt
+          echo "APK SHA-256: $(sha256sum "$APK" | cut -d' ' -f1)" | tee -a ci-reports/apk-inventory-summary.txt
 
       - name: Verify APK, signature, and ABI
         id: verify-apk
@@ -253,14 +387,97 @@ jobs:
           adb logcat -d > ci-reports/android-logcat.txt 2>&1 || true
           adb shell dumpsys meminfo > ci-reports/android-meminfo.txt 2>&1 || true
 
+      - name: Collect full command logs and compare build history
+        id: report-collector
+        if: \${{ always() }}
+        shell: bash
+        env:
+          ANALYZE_RESULT: \${{ steps.analyze.outcome }}
+          TEST_RESULT: \${{ steps.tests.outcome }}
+          SCREENSHOT_RESULT: \${{ steps.screenshot-tests.outcome }}
+          COVERAGE_RESULT: \${{ steps.coverage-report.outcome }}
+          FORMAT_RESULT: \${{ steps.format.outcome }}
+          BUILD_RESULT: \${{ steps.build.outcome }}
+          APK_RESULT: \${{ steps.verify-apk.outcome }}
+          EMULATOR_RESULT: \${{ steps.emulator.outcome }}
+          PUB_GET_RESULT: \${{ steps.pub-get.outcome }}
+        run: |
+          set -euo pipefail
+          mkdir -p ci-reports .ci-history
+          apk_hash=""
+          [[ ! -f build/app/outputs/flutter-apk/app-release.apk ]] || apk_hash="$(sha256sum build/app/outputs/flutter-apk/app-release.apk | awk '{print $1}')"
+          jq -cn \
+            --arg repo "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF_NAME" --arg sha "$GITHUB_SHA" \
+            --arg run "$GITHUB_RUN_ID" --arg attempt "$GITHUB_RUN_ATTEMPT" \
+            --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg pub "$PUB_GET_RESULT" --arg analyze "$ANALYZE_RESULT" --arg tests "$TEST_RESULT" \
+            --arg screenshots "$SCREENSHOT_RESULT" --arg coverage "$COVERAGE_RESULT" \
+            --arg format "$FORMAT_RESULT" --arg emulator "$EMULATOR_RESULT" \
+            --arg build "$BUILD_RESULT" --arg verify "$APK_RESULT" --arg apk_hash "$apk_hash" \
+            '{repository:$repo,ref:$ref,commit:$sha,run_id:$run,attempt:$attempt,date:$date,pub_get:$pub,analyze:$analyze,tests:$tests,screenshot_tests:$screenshots,coverage:$coverage,format:$format,emulator:$emulator,build:$build,apk_verify:$verify,apk_sha256:$apk_hash}' \
+            >> .ci-history/history.jsonl
+          cp .ci-history/history.jsonl ci-reports/build-history.jsonl
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          records=[json.loads(s) for s in Path(".ci-history/history.jsonl").read_text().splitlines() if s.strip()]
+          cur=records[-1]; prev=records[-2] if len(records)>1 else None
+          keys=["analyze","tests","screenshot_tests","coverage","format","emulator","build","apk_verify"]
+          lines=["# Build history comparison","",f"- Current run: {cur['run_id']} ({cur['commit'][:12]})"]
+          if prev:
+              lines += [f"- Previous run: {prev['run_id']} ({prev['commit'][:12]})","","| Check | Previous | Current | Change |","|---|---|---|---|"]
+              for k in keys:
+                  a,b=prev.get(k,"unknown"),cur.get(k,"unknown")
+                  lines.append(f"| {k} | {a} | {b} | {'changed' if a!=b else 'same'} |")
+              lines += ["",f"- Previous APK SHA-256: {prev.get('apk_sha256') or 'not built'}",
+                        f"- Current APK SHA-256: {cur.get('apk_sha256') or 'not built'}",
+                        f"- APK hash changed: {'yes' if prev.get('apk_sha256')!=cur.get('apk_sha256') else 'no'}"]
+          else: lines += ["","No previous cache baseline was available; this run establishes it."]
+          Path("ci-reports/build-history-comparison.md").write_text("\n".join(lines)+"\n")
+          PY
+          {
+            echo "# Unified Flutter CI report"
+            echo
+            echo "Complete project snapshot: ci-reports/project-source-snapshot.tar.gz"
+            echo "Source inventory: ci-reports/source-file-list.txt"
+            echo "Source SHA-256: ci-reports/source-manifest.sha256"
+            echo "APK inventory and integrity: ci-reports/apk-contents.txt and ci-reports/apk-archive-integrity.log"
+            echo "Build comparison: ci-reports/build-history-comparison.md"
+            echo
+            for f in ci-reports/*.log; do
+              [[ -f "$f" ]] || continue
+              echo
+              echo "## Log: $f"
+              echo "--- BEGIN FULL LOG ---"
+              cat "$f"
+              echo "--- END FULL LOG ---"
+            done
+            for f in ci-reports/coverage-summary.md ci-reports/build-history-comparison.md ci-reports/apk-inventory-summary.txt ci-reports/flutter-dependency-report.log; do
+              [[ -f "$f" ]] || continue
+              echo
+              echo "## Report: $f"
+              cat "$f"
+            done
+          } > ci-reports/unified-report.md
+          cat ci-reports/build-history-comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Save build history for the next run
+        if: \${{ always() && steps.report-collector.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .ci-history
+          key: flutter-build-history-\${{ github.repository_id }}-\${{ github.ref_name }}-\${{ github.run_id }}-\${{ github.run_attempt }}
+
       - name: Upload Flutter reports and diagnostics
-        if: ${{ always() }}
+        if: \${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: flutter-ci-reports-${{ github.run_id }}
           path: |
             ci-reports/**
             coverage/lcov.info
+            test/failures/**
           if-no-files-found: warn
           retention-days: 14
 
@@ -274,6 +491,8 @@ jobs:
           BUILD_RESULT: ${{ steps.build.outcome }}
           APK_RESULT: ${{ steps.verify-apk.outcome }}
           EMULATOR_RESULT: ${{ steps.emulator.outcome }}
+          SCREENSHOT_RESULT: ${{ steps.screenshot-tests.outcome }}
+          COVERAGE_RESULT: ${{ steps.coverage-report.outcome }}
         run: |
           {
             echo "## Shared Flutter CI"
@@ -282,6 +501,8 @@ jobs:
             echo "|---|---|"
             echo "| Analyze | ${ANALYZE_RESULT:-not requested} |"
             echo "| Unit/widget tests | ${TEST_RESULT:-not requested} |"
+            echo "| Screenshot/golden comparison | ${SCREENSHOT_RESULT:-not requested} |"
+            echo "| Coverage report | ${COVERAGE_RESULT:-not requested} |"
             echo "| Dart format | ${FORMAT_RESULT:-not requested} |"
             echo "| Android emulator | ${EMULATOR_RESULT:-not requested} |"
             echo "| APK build | ${BUILD_RESULT:-not requested} |"
