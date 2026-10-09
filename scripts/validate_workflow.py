@@ -20,7 +20,7 @@ required_contract = [
     "flutter build apk --config-only",
     "--split-per-abi",
     "app-$EXPECTED_ABI-release.apk",
-    "APK ABI selection must map the requested target to one split APK",
+    'SELECTED_APK="$OUTPUT_DIR/app-$EXPECTED_ABI-release.apk"',
     "actions/cache/restore@v5",
     "actions/cache/save@v5",
     "Restore previous build history",
