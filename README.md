@@ -39,7 +39,7 @@ permissions:
 
 jobs:
   flutter-ci:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.8
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@92cded954be5653a48fada29e926e4a3e4f402b7
     with:
       run-analyze: true
       run-tests: true
@@ -60,7 +60,7 @@ jobs:
       generate-artifact-attestation: false
 ```
 
-For maximum supply-chain stability, pin the reusable workflow reference to a reviewed full commit SHA. The examples use the v1.1.8 release tag. Enabling targeted PR selection requires the caller to grant pull-requests: read. Enabling artifact attestation additionally requires the reusable-call job to grant id-token: write and attestations: write; leave attestation off unless the repository is eligible.
+The examples pin commit [92cded954be5653a48fada29e926e4a3e4f402b7](https://github.com/TomasThrawat/hyouka-flutter-workflows/commit/92cded954be5653a48fada29e926e4a3e4f402b7), which contains the new inputs. The older v1.1.8 tag does not include these features. Review and update the full commit SHA when choosing a newer revision. Enabling targeted PR selection requires the caller to grant pull-requests: read. Enabling artifact attestation additionally requires the reusable-call job to grant id-token: write and attestations: write; leave attestation off unless the repository is eligible.
 
 ## Audit existing custom builds without replacing them
 
@@ -81,7 +81,7 @@ permissions:
 
 jobs:
   security-audit:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.8
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@92cded954be5653a48fada29e926e4a3e4f402b7
     with:
       run-analyze: false
       run-tests: false
