@@ -587,6 +587,26 @@ jobs:
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
           "$(go env GOPATH)/bin/osv-scanner" --version
 
+      - name: Set up Flutter when a lockfile is missing
+        if: \${{ hashFiles('pubspec.yaml') != '' && hashFiles('pubspec.lock') == '' }}
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: \${{ inputs.flutter-channel }}
+          flutter-version: \${{ inputs.flutter-version }}
+          cache: true
+
+      - name: Resolve missing Flutter lockfile for audit without committing changes
+        id: resolve-lockfile
+        if: \${{ hashFiles('pubspec.yaml') != '' && hashFiles('pubspec.lock') == '' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          flutter pub get 2>&1 | tee ci-reports/flutter-lockfile-resolution.log
+          test -s pubspec.lock
+          cp pubspec.lock ci-reports/resolved-pubspec.lock
+          sha256sum pubspec.lock > ci-reports/resolved-pubspec-lock.sha256
+          echo "Generated a runner-local pubspec.lock for OSV scanning; no repository file was committed or upgraded." >> "$GITHUB_STEP_SUMMARY"
+
       - name: Scan lockfiles for known dependency vulnerabilities
         id: osv
         shell: bash
@@ -595,8 +615,13 @@ jobs:
         run: |
           set -euo pipefail
           if ! find . -path './.git' -prune -o -type f \( -name 'pubspec.lock' -o -name 'gradle.lockfile' -o -name 'buildscript-gradle.lockfile' -o -name 'package-lock.json' -o -name 'pnpm-lock.yaml' -o -name 'yarn.lock' -o -name 'Cargo.lock' -o -name 'requirements.txt' -o -name 'poetry.lock' -o -name 'uv.lock' \) -print -quit | grep -q .; then
+            echo "::warning::No supported dependency lockfiles found; OSV dependency scan skipped."
             echo "No supported dependency lockfiles found; OSV scan skipped." | tee ci-reports/osv-scan.log
-            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            echo "exit_code=skipped" >> "$GITHUB_OUTPUT"
+            if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
+              echo "::error::Strict security mode requires a supported dependency lockfile."
+              exit 1
+            fi
             exit 0
           fi
 
