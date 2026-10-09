@@ -134,7 +134,7 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         try:
             exec(compile(log_script, "log_script_missing_artifact.py", "exec"), {})
         except SystemExit as exc:
-            assert exc.code == 1, "Missing required report artifacts must fail the validation step"
+            assert isinstance(exc.code, str) and "Expected per-job report artifacts are missing" in exc.code, "Missing required report artifacts must fail with a diagnostic"
         else:
             raise AssertionError("Missing expected security report artifact did not fail")
         missing_analysis = json.loads(
