@@ -86,10 +86,12 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         records = [
             {"run_id": "100", "commit": "aaaa1111", "analyze": "success", "tests": "success",
              "screenshot_tests": "success", "coverage": "success", "format": "skipped",
-             "emulator": "skipped", "build": "success", "apk_verify": "success", "apk_sha256": "oldhash"},
+             "emulator": "skipped", "build": "success", "apk_verify": "success", "apk_sha256": "oldhash",
+             "pubspec_lock_sha256": "oldlock"},
             {"run_id": "101", "commit": "bbbb2222", "analyze": "success", "tests": "failure",
              "screenshot_tests": "skipped", "coverage": "success", "format": "skipped",
-             "emulator": "skipped", "build": "success", "apk_verify": "success", "apk_sha256": "newhash"},
+             "emulator": "skipped", "build": "success", "apk_verify": "success", "apk_sha256": "newhash",
+             "pubspec_lock_sha256": "newlock"},
         ]
         (history_dir / "history.jsonl").write_text(
             "".join(json.dumps(item) + "\n" for item in records), encoding="utf-8"
@@ -98,6 +100,7 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         history_report = (report_dir / "build-history-comparison.md").read_text(encoding="utf-8")
         assert "Previous run: 100" in history_report
         assert "APK hash changed: yes" in history_report
+        assert "Dependency lock hash changed: yes" in history_report
         assert "| tests | success | failure | changed |" in history_report
 
         # Unified-log regression: prove logs from both Flutter and security folders are analyzed.
@@ -156,6 +159,6 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
 print("PASS: central workflow contract markers and safe no-auto-update rules")
 print(f"PASS: compiled {len(blocks)} embedded Python scripts")
 print("PASS: LCOV percentage and exact uncovered-line regression")
-print("PASS: cross-run build history and APK SHA-256 comparison regression")
+print("PASS: cross-run build history, APK SHA-256, and dependency-lock hash comparison regression")
 print("PASS: unified Flutter + security log parsing and full-log report regression")
 print("PASS: missing per-job report detection fails with a diagnostic report preserved")
