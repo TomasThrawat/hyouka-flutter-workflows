@@ -1,0 +1,410 @@
+name: Reusable Flutter CI
+
+on:
+  workflow_call:
+    inputs:
+      flutter-channel:
+        description: Flutter channel used when flutter-version is empty.
+        type: string
+        required: false
+        default: stable
+      flutter-version:
+        description: Optional exact Flutter SDK version. Leave empty to use the selected channel.
+        type: string
+        required: false
+        default: ''
+      run-analyze:
+        description: Run flutter analyze.
+        type: boolean
+        required: false
+        default: true
+      run-tests:
+        description: Run Flutter unit and widget tests when test files exist.
+        type: boolean
+        required: false
+        default: true
+      check-format:
+        description: Fail if Dart files under lib or test are not formatted.
+        type: boolean
+        required: false
+        default: false
+      build-apk:
+        description: Build and verify an Android release APK.
+        type: boolean
+        required: false
+        default: true
+      target-platform:
+        description: Flutter Android target platform. Defaults to arm64-v8a only.
+        type: string
+        required: false
+        default: android-arm64
+      generate-android:
+        description: Generate Android project files only when android/ does not exist.
+        type: boolean
+        required: false
+        default: false
+      android-project-name:
+        description: Project name passed to flutter create when generate-android is enabled.
+        type: string
+        required: false
+        default: app
+      android-organization:
+        description: Organization passed to flutter create when generate-android is enabled.
+        type: string
+        required: false
+        default: com.example
+      run-emulator-tests:
+        description: Run integration_test/ on a headless Android emulator.
+        type: boolean
+        required: false
+        default: false
+      emulator-api-level:
+        description: Android API level for the emulator.
+        type: number
+        required: false
+        default: 35
+      run-security-audit:
+        description: Scan Git history for secrets and dependency lockfiles for known vulnerabilities.
+        type: boolean
+        required: false
+        default: true
+      fail-on-security-findings:
+        description: Fail the security job if either scanner reports findings. Scanner installation failures always fail.
+        type: boolean
+        required: false
+        default: false
+      artifact-name:
+        description: Name of the uploaded APK artifact.
+        type: string
+        required: false
+        default: flutter-android-arm64-apk
+
+permissions:
+  contents: read
+
+jobs:
+  flutter:
+    if: ${{ inputs.run-analyze || inputs.run-tests || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Verify Flutter project
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f pubspec.yaml || {
+            echo "::error::pubspec.yaml was not found at the repository root."
+            exit 1
+          }
+          mkdir -p ci-reports
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: ${{ inputs.flutter-channel }}
+          flutter-version: ${{ inputs.flutter-version }}
+          cache: true
+          cache-dependency-path: pubspec.lock
+
+      - name: Generate Android files when explicitly requested
+        if: ${{ inputs.generate-android && inputs.build-apk && !cancelled() }}
+        shell: bash
+        env:
+          ANDROID_PROJECT_NAME: ${{ inputs.android-project-name }}
+          ANDROID_ORGANIZATION: ${{ inputs.android-organization }}
+        run: |
+          set -euo pipefail
+          if [[ ! -d android ]]; then
+            flutter create --platforms=android \
+              --project-name "$ANDROID_PROJECT_NAME" \
+              --org "$ANDROID_ORGANIZATION" .
+          else
+            echo "android/ already exists; leaving native project files unchanged."
+          fi
+
+      - name: Get dependencies
+        id: pub-get
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter pub get 2>&1 | tee ci-reports/flutter-pub-get.log
+
+      - name: Analyze Dart code
+        id: analyze
+        if: ${{ inputs.run-analyze }}
+        shell: bash
+        run: |
+          set -o pipefail
+          flutter analyze 2>&1 | tee ci-reports/flutter-analyze.log
+
+      - name: Check Dart formatting
+        id: format
+        if: ${{ inputs.check-format }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          paths=()
+          [[ -d lib ]] && paths+=(lib)
+          [[ -d test ]] && paths+=(test)
+          if (( ${#paths[@]} == 0 )); then
+            echo "No lib/ or test/ directories; format check skipped."
+            exit 0
+          fi
+          dart format --output=none --set-exit-if-changed "${paths[@]}" 2>&1 | tee ci-reports/dart-format.log
+
+      - name: Run unit and widget tests
+        id: tests
+        if: ${{ inputs.run-tests }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -d test ]] && find test -type f -name '*_test.dart' -print -quit | grep -q .; then
+            set -o pipefail
+            flutter test --coverage 2>&1 | tee ci-reports/flutter-test.log
+          else
+            echo "No Dart test files found under test/; unit/widget tests skipped." | tee ci-reports/flutter-test.log
+          fi
+
+      - name: Report suggested safe Dart fixes (does not modify source)
+        id: fix-report
+        if: ${{ inputs.run-analyze }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -o pipefail
+          dart fix --dry-run 2>&1 | tee ci-reports/dart-fix-suggestions.log
+
+      - name: Run integration tests on Android emulator
+        id: emulator
+        if: ${{ inputs.run-emulator-tests }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.emulator-api-level }}
+          arch: x86_64
+          target: default
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -no-metrics
+          script: |
+            set -euo pipefail
+            if ! find integration_test -type f -name '*_test.dart' -print -quit 2>/dev/null | grep -q .; then
+              echo "run-emulator-tests is enabled, but no integration_test/*_test.dart files were found."
+              exit 1
+            fi
+            flutter test integration_test --no-pub
+
+      - name: Build Android release APK
+        id: build
+        if: ${{ inputs.build-apk }}
+        shell: bash
+        env:
+          TARGET_PLATFORM: ${{ inputs.target-platform }}
+        run: |
+          set -o pipefail
+          flutter build apk --release --target-platform "$TARGET_PLATFORM" --no-pub 2>&1 | tee ci-reports/flutter-build-apk.log
+
+      - name: Verify APK, signature, and ABI
+        id: verify-apk
+        if: ${{ inputs.build-apk }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          test -s "$APK" || {
+            echo "::error::The expected APK was not produced: $APK"
+            exit 1
+          }
+
+          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)"
+          APKSIGNER="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/apksigner"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$APK" 2>&1 | tee ci-reports/apksigner-verify.log
+
+          if [[ "${{ inputs.target-platform }}" == "android-arm64" ]]; then
+            ABIS="$(unzip -Z1 "$APK" | awk -F/ '$1 == "lib" && $2 != "" {print $2}' | sort -u | tr '\n' ' ' | xargs)"
+            echo "Native ABIs in APK: ${ABIS:-none}"
+            if [[ -n "$ABIS" && "$ABIS" != "arm64-v8a" ]]; then
+              echo "::error::Expected only arm64-v8a native libraries but found: $ABIS"
+              exit 1
+            fi
+          fi
+
+          sha256sum "$APK" | tee ci-reports/apk-sha256.txt
+
+      - name: Upload APK
+        if: ${{ inputs.build-apk && always() && steps.verify-apk.outcome == 'success' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ inputs.artifact-name }}
+          path: build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Collect Android diagnostics after a failure
+        if: ${{ failure() }}
+        shell: bash
+        run: |
+          mkdir -p ci-reports
+          adb logcat -d > ci-reports/android-logcat.txt 2>&1 || true
+          adb shell dumpsys meminfo > ci-reports/android-meminfo.txt 2>&1 || true
+
+      - name: Upload Flutter reports and diagnostics
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: flutter-ci-reports-${{ github.run_id }}
+          path: |
+            ci-reports/**
+            coverage/lcov.info
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Write Flutter job summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          ANALYZE_RESULT: ${{ steps.analyze.outcome }}
+          TEST_RESULT: ${{ steps.tests.outcome }}
+          FORMAT_RESULT: ${{ steps.format.outcome }}
+          BUILD_RESULT: ${{ steps.build.outcome }}
+          APK_RESULT: ${{ steps.verify-apk.outcome }}
+          EMULATOR_RESULT: ${{ steps.emulator.outcome }}
+        run: |
+          {
+            echo "## Shared Flutter CI"
+            echo
+            echo "| Check | Result |"
+            echo "|---|---|"
+            echo "| Analyze | ${ANALYZE_RESULT:-not requested} |"
+            echo "| Unit/widget tests | ${TEST_RESULT:-not requested} |"
+            echo "| Dart format | ${FORMAT_RESULT:-not requested} |"
+            echo "| Android emulator | ${EMULATOR_RESULT:-not requested} |"
+            echo "| APK build | ${BUILD_RESULT:-not requested} |"
+            echo "| APK verification | ${APK_RESULT:-not requested} |"
+            echo
+            echo "Full command logs and reports are available in the workflow logs and uploaded artifacts."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  security-audit:
+    if: ${{ inputs.run-security-audit }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout full history for secret scanning
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare report directory
+        shell: bash
+        run: mkdir -p ci-reports
+
+      - name: Install Gitleaks (free open-source CLI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="8.30.0"
+          ARCHIVE="gitleaks_${VERSION}_linux_x64.tar.gz"
+          BASE_URL="https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}"
+          cd "$RUNNER_TEMP"
+          curl --fail --location --silent --show-error "$BASE_URL/$ARCHIVE" --output "$ARCHIVE"
+          curl --fail --location --silent --show-error "$BASE_URL/gitleaks_${VERSION}_checksums.txt" --output gitleaks_checksums.txt
+          grep -F "  $ARCHIVE" gitleaks_checksums.txt | sha256sum --check
+          tar -xzf "$ARCHIVE" gitleaks
+          sudo install -m 0755 gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan repository history for exposed secrets
+        id: gitleaks
+        shell: bash
+        env:
+          FAIL_ON_FINDINGS: ${{ inputs.fail-on-security-findings }}
+        run: |
+          set -uo pipefail
+          set +e
+          gitleaks detect --source . --redact --report-format json --report-path ci-reports/gitleaks.json 2>&1 | tee ci-reports/gitleaks.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" -ne 0 ]]; then
+            echo "::warning::Gitleaks returned exit code $status. Review ci-reports/gitleaks.json and ci-reports/gitleaks.log."
+            if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then exit "$status"; fi
+          fi
+
+      - name: Set up Go for OSV-Scanner
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26.2'
+          cache: false
+
+      - name: Install OSV-Scanner (free open-source CLI)
+        shell: bash
+        run: |
+          set -euo pipefail
+          go install github.com/google/osv-scanner/v2/cmd/osv-scanner@v2.6.0
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          "$(go env GOPATH)/bin/osv-scanner" --version
+
+      - name: Scan lockfiles for known dependency vulnerabilities
+        id: osv
+        shell: bash
+        env:
+          FAIL_ON_FINDINGS: ${{ inputs.fail-on-security-findings }}
+        run: |
+          set -euo pipefail
+          if ! find . -path './.git' -prune -o -type f \( -name 'pubspec.lock' -o -name 'gradle.lockfile' -o -name 'buildscript-gradle.lockfile' -o -name 'package-lock.json' -o -name 'pnpm-lock.yaml' -o -name 'yarn.lock' -o -name 'Cargo.lock' -o -name 'requirements.txt' -o -name 'poetry.lock' -o -name 'uv.lock' \) -print -quit | grep -q .; then
+            echo "No supported dependency lockfiles found; OSV scan skipped." | tee ci-reports/osv-scan.log
+            echo "exit_code=0" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          set +e
+          osv-scanner scan source -r . --format=vertical --output-file=ci-reports/osv-scan.txt 2>&1 | tee ci-reports/osv-scan.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [[ "$status" -ne 0 ]]; then
+            echo "::warning::OSV-Scanner returned exit code $status. Review ci-reports/osv-scan.txt and ci-reports/osv-scan.log."
+            if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then exit "$status"; fi
+          fi
+
+      - name: Write security summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          GITLEAKS_STATUS: ${{ steps.gitleaks.outputs.exit_code }}
+          OSV_STATUS: ${{ steps.osv.outputs.exit_code }}
+          FAIL_ON_FINDINGS: ${{ inputs.fail-on-security-findings }}
+        run: |
+          {
+            echo "## Shared Security Audit"
+            echo
+            echo "| Scanner | Exit code |"
+            echo "|---|---:|"
+            echo "| Gitleaks | ${GITLEAKS_STATUS:-not completed} |"
+            echo "| OSV-Scanner | ${OSV_STATUS:-not completed} |"
+            echo
+            if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
+              echo "Security scanner findings are configured to fail this job."
+            else
+              echo "Findings are warnings in this onboarding configuration; review the reports before enabling fail-on-security-findings."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload security reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: flutter-security-reports-${{ github.run_id }}
+          path: ci-reports/**
+          if-no-files-found: warn
+          retention-days: 14
