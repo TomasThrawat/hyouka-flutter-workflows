@@ -688,6 +688,7 @@ jobs:
       contents: read
     steps:
       - name: Download all Flutter and security report artifacts
+        id: download-reports
         continue-on-error: true
         uses: actions/download-artifact@v7
         with:
