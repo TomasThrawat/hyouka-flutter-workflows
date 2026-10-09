@@ -771,9 +771,10 @@ jobs:
               report.extend('MISSING REQUIRED ARTIFACT: ' + name for name in missing_expected)
           else:
               report.append('All expected per-job report artifacts were downloaded.')
-          report.extend(['', '## Automated log analysis', '',
+          report.extend([
+              '', '## Automated log analysis', '',
               '| Category | Matching lines |', '|---|---:|'
-          ]
+          ])
           report.extend('| ' + key + ' | ' + str(value) + ' |' for key, value in counts.items())
           report.extend(['', 'Pattern matches are signals for review, not proof of a defect. Original per-job files are preserved in the artifact.', ''])
           if findings:

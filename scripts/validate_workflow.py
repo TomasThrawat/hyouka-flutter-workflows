@@ -111,7 +111,10 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
             "WORKFLOW_RUN_ID": "555",
             "WORKFLOW_COMMIT": "deadbeef",
             "FLUTTER_JOB_RESULT": "success",
-            "SECURITY_JOB_RESULT": "failure",
+            "SECURITY_JOB_RESULT": "success",
+            "EXPECT_FLUTTER_REPORT": "true",
+            "EXPECT_SECURITY_REPORT": "true",
+            "DOWNLOAD_STEP_RESULT": "success",
         })
         exec(compile(log_script, "log_script.py", "exec"), {})
         analysis = json.loads(
@@ -122,7 +125,25 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         assert analysis["matches_by_category"]["errors"] == 1
         assert analysis["matches_by_category"]["warnings"] == 1
         assert analysis["matches_by_category"]["exceptions"] == 1
+        assert analysis["missing_expected_artifacts"] == []
         assert "synthetic error marker" in combined and "Caught exception" in combined
+
+        # Missing report regression: create the report, flag the missing artifact, and fail.
+        import shutil
+        shutil.rmtree(security_logs)
+        try:
+            exec(compile(log_script, "log_script_missing_artifact.py", "exec"), {})
+        except SystemExit as exc:
+            assert exc.code == 1, "Missing required report artifacts must fail the validation step"
+        else:
+            raise AssertionError("Missing expected security report artifact did not fail")
+        missing_analysis = json.loads(
+            (temp_path / "combined-reports" / "log-analysis.json").read_text(encoding="utf-8")
+        )
+        assert missing_analysis["missing_expected_artifacts"] == ["flutter-security-reports-555"]
+        assert "MISSING REQUIRED ARTIFACT" in (
+            (temp_path / "combined-reports" / "unified-report.md").read_text(encoding="utf-8")
+        )
     finally:
         os.chdir(old_cwd)
 
@@ -131,3 +152,4 @@ print(f"PASS: compiled {len(blocks)} embedded Python scripts")
 print("PASS: LCOV percentage and exact uncovered-line regression")
 print("PASS: cross-run build history and APK SHA-256 comparison regression")
 print("PASS: unified Flutter + security log parsing and full-log report regression")
+print("PASS: missing per-job report detection fails with a diagnostic report preserved")
