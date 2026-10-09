@@ -89,6 +89,13 @@ on:
         required: false
         default: flutter-android-arm64-apk
 
+env:
+  GIT_CONFIG_COUNT: 2
+  GIT_CONFIG_KEY_0: init.defaultBranch
+  GIT_CONFIG_VALUE_0: main
+  GIT_CONFIG_KEY_1: advice.defaultBranchName
+  GIT_CONFIG_VALUE_1: false
+
 permissions:
   contents: read
 
@@ -777,7 +784,88 @@ jobs:
           logs = [p for p in files if p.suffix.lower() == '.log']
           rules = {
               'errors': re.compile(r'::error::|##\[error\]|\berror\s*[•:]|\berror:', re.I),
-              'exceptions': re.compile(r'Traceback \(most recent call last\)|\bException\b|Caught exception', re.I),
+              'known_flutter_tool_noise': re.compile(r'Caught exception: Already watching path: .+/android\s*
+              'warnings': re.compile(r'::warning::|##\[warning\]|\bwarning\s*[•:]|\bwarning:', re.I),
+              'info_lints': re.compile(r'\binfo\s*•', re.I),
+          }
+          counts = {key: 0 for key in rules}
+          findings = []
+          for path in logs:
+              for number, line in enumerate(path.read_text(errors='replace').splitlines(), 1):
+                  categories = [key for key, rule in rules.items() if rule.search(line)]
+                  for key in categories:
+                      counts[key] += 1
+                  if categories:
+                      findings.append({'file': str(path), 'line': number, 'categories': categories, 'text': line[:2000]})
+
+          data = {
+              'run_id': os.environ['WORKFLOW_RUN_ID'],
+              'commit': os.environ['WORKFLOW_COMMIT'],
+              'flutter_job_result': os.environ['FLUTTER_JOB_RESULT'],
+              'security_job_result': os.environ['SECURITY_JOB_RESULT'],
+              'downloaded_files': len(files),
+              'log_files_analyzed': len(logs),
+              'download_step_result': os.environ.get('DOWNLOAD_STEP_RESULT', 'unknown'),
+              'expected_artifacts': expected,
+              'missing_expected_artifacts': missing_expected,
+              'matches_by_category': counts,
+              'matched_lines': findings,
+              'files': [{'path': str(p), 'size_bytes': p.stat().st_size} for p in files],
+          }
+          Path('combined-reports/log-analysis.json').write_text(json.dumps(data, indent=2) + '\n')
+
+          report = [
+              '# Unified Flutter Workflow Report', '',
+              '- Workflow run: ' + data['run_id'],
+              '- Commit: ' + data['commit'],
+              '- Flutter job: ' + data['flutter_job_result'],
+              '- Security audit job: ' + data['security_job_result'],
+              '- Downloaded report files: ' + str(len(files)),
+              '- Log files analyzed: ' + str(len(logs)),
+              '- Artifact download step: ' + data['download_step_result'],
+              '- Missing expected per-job artifacts: ' + str(len(missing_expected)), '',
+              '## Artifact download validation', '',
+          ]
+          if missing_expected:
+              report.extend('MISSING REQUIRED ARTIFACT: ' + name for name in missing_expected)
+          else:
+              report.append('All expected per-job report artifacts were downloaded.')
+          report.extend([
+              '', '## Automated log analysis', '',
+              '| Category | Matching lines |', '|---|---:|'
+          ])
+          report.extend('| ' + key + ' | ' + str(value) + ' |' for key, value in counts.items())
+          report.extend(['', 'Pattern matches are signals for review, not proof of a defect. Original per-job files are preserved in the artifact.', ''])
+          if findings:
+              report.extend(['## Matched log lines', ''])
+              for item in findings[:500]:
+                  report.append('- ' + item['file'] + ':' + str(item['line']) + ' (' + ', '.join(item['categories']) + '): ' + item['text'])
+              if len(findings) > 500:
+                  report.append('- Inline findings capped at 500 of ' + str(len(findings)) + '; log-analysis.json contains all findings.')
+          else:
+              report.append('No error, warning, exception, or info-lint patterns were found in downloaded log files.')
+          report.extend(['', '## Full command logs', ''])
+          for path in logs:
+              report.extend(['### ' + str(path), '', '~~~text', path.read_text(errors='replace'), '~~~', ''])
+          report.extend(['', '## Report inventory', '', '| File | Size (bytes) |', '|---|---:|'])
+          report.extend('| ' + str(p) + ' | ' + str(p.stat().st_size) + ' |' for p in files)
+          Path('combined-reports/unified-report.md').write_text('\n'.join(report) + '\n')
+          print('Downloaded ' + str(len(files)) + ' report files; analyzed ' + str(len(logs)) + ' logs.')
+          print('Matches by category: ' + json.dumps(counts, sort_keys=True))
+          if missing_expected:
+              raise SystemExit('Expected per-job report artifacts are missing: ' + ', '.join(missing_expected))
+          PY
+
+      - name: Upload unified report and all per-job reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: flutter-complete-report-${{ github.run_id }}
+          path: combined-reports/**
+          if-no-files-found: error
+          retention-days: 14
+, re.I),
+              'exceptions': re.compile(r'^(?!.*Caught exception: Already watching path: .+/android\s*$).*(?:Traceback \(most recent call last\)|\bException\b|Caught exception)', re.I),
               'warnings': re.compile(r'::warning::|##\[warning\]|\bwarning\s*[•:]|\bwarning:', re.I),
               'info_lints': re.compile(r'\binfo\s*•', re.I),
           }

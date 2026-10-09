@@ -16,6 +16,11 @@ source = WORKFLOW.read_text(encoding="utf-8")
 required_contract = [
     "Snapshot the complete project before inspection",
     "Snapshot complete source before security inspection",
+    "GIT_CONFIG_COUNT: 2",
+    "GIT_CONFIG_KEY_0: init.defaultBranch",
+    "GIT_CONFIG_VALUE_0: main",
+    "GIT_CONFIG_KEY_1: advice.defaultBranchName",
+    "GIT_CONFIG_VALUE_1: false",
     "Refresh Android plugin registration after dependency resolution",
     "flutter build apk --config-only",
     "--split-per-abi",
@@ -35,6 +40,8 @@ required_contract = [
     "Dependency lock hash changed",
     "Expected exactly arm64-v8a native libraries",
     "Collect all per-job reports and analyze logs",
+    "known_flutter_tool_noise",
+    "Caught exception: Already watching path:",
     "flutter-complete-report-",
     "fail-on-security-findings",
 ]
@@ -124,7 +131,8 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         flutter_logs.mkdir(parents=True)
         security_logs.mkdir(parents=True)
         (flutter_logs / "flutter-test.log").write_text(
-            "All tests passed\n::error::synthetic error marker\nwarning: synthetic warning\n",
+            "All tests passed\n::error::synthetic error marker\nwarning: synthetic warning\n"
+            "Caught exception: Already watching path: /tmp/project/android\n",
             encoding="utf-8",
         )
         (security_logs / "gitleaks.log").write_text(
@@ -147,7 +155,8 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         assert analysis["log_files_analyzed"] == 2
         assert analysis["matches_by_category"]["errors"] == 1
         assert analysis["matches_by_category"]["warnings"] == 1
-        assert analysis["matches_by_category"]["exceptions"] == 1
+        assert analysis["matches_by_category"]["exceptions"] == 1, "A real exception must remain detectable while the known Flutter watcher line is excluded"
+        assert analysis["matches_by_category"]["known_flutter_tool_noise"] == 1, "The duplicate-directory-watch message must be categorized as known tool noise"
         assert analysis["missing_expected_artifacts"] == []
         assert "synthetic error marker" in combined and "Caught exception" in combined
 
@@ -174,5 +183,5 @@ print("PASS: central workflow contract markers and safe no-auto-update rules")
 print(f"PASS: compiled {len(blocks)} embedded Python scripts")
 print("PASS: LCOV percentage and exact uncovered-line regression")
 print("PASS: cross-run build history, APK SHA-256, and dependency-lock hash comparison regression")
-print("PASS: unified Flutter + security log parsing and full-log report regression")
+print("PASS: unified Flutter + security log parsing, known Flutter tool-noise classification, and full-log report regression")
 print("PASS: missing per-job report detection fails with a diagnostic report preserved")
