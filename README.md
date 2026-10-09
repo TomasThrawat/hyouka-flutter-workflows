@@ -34,7 +34,7 @@ permissions:
 
 jobs:
   flutter-ci:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.1
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.2
     with:
       run-analyze: true
       run-tests: true
@@ -47,7 +47,7 @@ jobs:
       artifact-name: my-app-arm64-apk
 ```
 
-For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.1` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
+For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.2` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
 
 ## Audit existing custom builds without replacing them
 
@@ -67,7 +67,7 @@ permissions:
 
 jobs:
   security-audit:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.1
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.2
     with:
       run-analyze: false
       run-tests: false
@@ -106,7 +106,7 @@ With `fail-on-security-findings: false`, scanner findings are warnings and repor
 
 Each run uploads a report artifact containing the full checked-out source snapshot, source file list, SHA-256 manifest, command logs, dependency audit, coverage summary/JSON/uncovered-line list, APK archive entry listing and integrity result (when built), and a comparison with the prior cached build. The APK itself is uploaded separately. Golden tests must be authored by the project and their expected images committed to source control; a generic workflow cannot safely invent app-specific screenshot expectations.
 
-Dependency inspection is read-only: `flutter pub get` resolves the lockfile as required by the project, while `flutter pub deps`, `flutter pub outdated`, Gitleaks, and OSV-Scanner produce reports. No package upgrade or source rewrite is performed automatically.
+Dependency inspection is read-only: `flutter pub get` resolves the lockfile as required by the project, while `flutter pub deps`, `flutter pub outdated`, Gitleaks, and OSV-Scanner produce reports. If an app has no committed `pubspec.lock`, the security job generates a runner-local lockfile only for OSV scanning and includes it in the report; it does not commit it. If no supported lockfile can be found or generated, the audit reports the scan as skipped with a warning. No package upgrade or source rewrite is performed automatically.
 
 ## Free-use caveat
 
