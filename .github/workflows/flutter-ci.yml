@@ -588,16 +588,16 @@ jobs:
           "$(go env GOPATH)/bin/osv-scanner" --version
 
       - name: Set up Flutter when a lockfile is missing
-        if: \${{ hashFiles('pubspec.yaml') != '' && hashFiles('pubspec.lock') == '' }}
+        if: ${{ hashFiles('pubspec.yaml') != '' && hashFiles('pubspec.lock') == '' }}
         uses: subosito/flutter-action@v2.23.0
         with:
-          channel: \${{ inputs.flutter-channel }}
-          flutter-version: \${{ inputs.flutter-version }}
+          channel: ${{ inputs.flutter-channel }}
+          flutter-version: ${{ inputs.flutter-version }}
           cache: true
 
       - name: Resolve missing Flutter lockfile for audit without committing changes
         id: resolve-lockfile
-        if: \${{ hashFiles('pubspec.yaml') != '' && hashFiles('pubspec.lock') == '' }}
+        if: ${{ hashFiles('pubspec.yaml') != '' && hashFiles('pubspec.lock') == '' }}
         shell: bash
         run: |
           set -euo pipefail
