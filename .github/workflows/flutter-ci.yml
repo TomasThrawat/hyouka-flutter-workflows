@@ -746,7 +746,7 @@ jobs:
       - name: Download all Flutter and security report artifacts
         id: download-reports
         continue-on-error: true
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
           pattern: flutter-*-reports-${{ github.run_id }}
           path: combined-reports/jobs

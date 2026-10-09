@@ -10,9 +10,9 @@ A central, reusable GitHub Actions setup for Flutter projects. It uses the Flutt
 - Gitleaks scanning of the repository's Git history and OSV-Scanner scanning of supported dependency lockfiles, including `pubspec.lock`. Flutter dependency graph/outdated reports are informational and never run an automatic upgrade.
 - A complete source snapshot and SHA-256 file manifest captured before analysis, dependency resolution, or APK inspection.
 - Build history cached between runs with comparison of check outcomes, APK SHA-256 hashes, and `pubspec.lock` SHA-256 hashes.
-- A unified report that combines the full command logs, dependency reports, coverage results, APK inventory, and build-history comparison. It verifies expected per-job reports were downloaded and fails with a diagnostic when one is missing.
+- A unified report that combines the full command logs, dependency reports, coverage results, APK inventory, and build-history comparison. It uses `actions/download-artifact@v8`, verifies expected per-job reports were downloaded, and fails with a diagnostic when one is missing.
 - GitHub checkout initialization avoids the obsolete `master`-branch hint, and unified log analysis distinguishes Flutter's recurring duplicate-directory-watch message from application exceptions while preserving original logs.
-- Detailed test coverage reports: total coverage, per-file coverage, and exact uncovered executable lines.
+- Detailed test coverage reports: total coverage, per-file coverage, and exact uncovered executable lines. Offline regression tests cover empty and full coverage, first-run and unchanged build-history baselines, required versus optional artifacts, log classification, high-volume log caps, and long-line truncation.
 - Golden/screenshot test comparison when tests use Flutter golden matchers and checked-in baseline images; baselines are never updated automatically.
 - Full APK archive integrity checks, complete entry listing, extracted-file hashes, signature verification, ABI validation, and APK SHA-256.
 - No automatic dependency upgrades, no silent source rewrites, and no automatic commits to the caller repository.
@@ -35,7 +35,7 @@ permissions:
 
 jobs:
   flutter-ci:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.7
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.8
     with:
       run-analyze: true
       run-tests: true
@@ -48,7 +48,7 @@ jobs:
       artifact-name: my-app-arm64-apk
 ```
 
-For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.7` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
+For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.8` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
 
 ## Audit existing custom builds without replacing them
 
@@ -68,7 +68,7 @@ permissions:
 
 jobs:
   security-audit:
-    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.7
+    uses: TomasThrawat/hyouka-flutter-workflows/.github/workflows/flutter-ci.yml@v1.1.8
     with:
       run-analyze: false
       run-tests: false
