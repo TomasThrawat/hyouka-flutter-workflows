@@ -644,19 +644,28 @@ jobs:
           FAIL_ON_FINDINGS: ${{ inputs.fail-on-security-findings }}
         run: |
           {
-            echo "## Shared Security Audit"
+            echo "# Shared Security Audit"
             echo
-            echo "| Scanner | Exit code |"
-            echo "|---|---:|"
-            echo "| Gitleaks | ${GITLEAKS_STATUS:-not completed} |"
-            echo "| OSV-Scanner | ${OSV_STATUS:-not completed} |"
+            echo "| Scanner | Exit code | Status |"
+            echo "|---|---:|---|"
+            echo "| Gitleaks | ${GITLEAKS_STATUS:-not completed} | ${GITLEAKS_STATUS:-unknown} |"
+            echo "| OSV-Scanner | ${OSV_STATUS:-not completed} | ${OSV_STATUS:-unknown} |"
+            echo
+            if [[ "$GITLEAKS_STATUS" != "0" && -n "$GITLEAKS_STATUS" ]]; then
+              echo "Gitleaks returned a non-zero exit code; inspect gitleaks.json and gitleaks.log."
+            fi
+            if [[ "$OSV_STATUS" == "skipped" ]]; then
+              echo "Dependency scan was skipped because no supported lockfile was available."
+            elif [[ "$OSV_STATUS" != "0" && -n "$OSV_STATUS" ]]; then
+              echo "OSV-Scanner returned a non-zero exit code; inspect osv-scan.txt and osv-scan.log."
+            fi
             echo
             if [[ "$FAIL_ON_FINDINGS" == "true" ]]; then
-              echo "Security scanner findings are configured to fail this job."
+              echo "Strict security mode is enabled; findings and skipped dependency scans can fail the job."
             else
-              echo "Findings are warnings in this onboarding configuration; review the reports before enabling fail-on-security-findings."
+              echo "Security findings are warnings in this configuration. Review the reports and explicitly enable strict mode when ready."
             fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          } | tee ci-reports/security-summary.md >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload security reports
         if: ${{ always() }}
