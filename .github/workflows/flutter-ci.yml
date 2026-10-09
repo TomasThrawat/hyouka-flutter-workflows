@@ -331,7 +331,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          flutter build --config-only 2>&1 | tee ci-reports/flutter-build-config.log
+          flutter build apk --config-only 2>&1 | tee ci-reports/flutter-build-config.log
 
       - name: Build Android release APK
         id: build
