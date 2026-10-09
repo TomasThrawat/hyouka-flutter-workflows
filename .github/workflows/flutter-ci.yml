@@ -701,6 +701,9 @@ jobs:
           SECURITY_JOB_RESULT: ${{ needs.security-audit.result }}
           WORKFLOW_RUN_ID: ${{ github.run_id }}
           WORKFLOW_COMMIT: ${{ github.sha }}
+          EXPECT_FLUTTER_REPORT: ${{ inputs.run-analyze || inputs.run-tests || inputs.check-format || inputs.build-apk || inputs.run-emulator-tests }}
+          EXPECT_SECURITY_REPORT: ${{ inputs.run-security-audit }}
+          DOWNLOAD_STEP_RESULT: ${{ steps.download-reports.outcome }}
         run: |
           set -euo pipefail
           mkdir -p combined-reports/jobs
@@ -711,6 +714,13 @@ jobs:
           from pathlib import Path
 
           root = Path('combined-reports/jobs')
+          run_id = os.environ['WORKFLOW_RUN_ID']
+          expected = []
+          if os.environ.get('EXPECT_FLUTTER_REPORT', '').lower() == 'true':
+              expected.append('flutter-ci-reports-' + run_id)
+          if os.environ.get('EXPECT_SECURITY_REPORT', '').lower() == 'true':
+              expected.append('flutter-security-reports-' + run_id)
+          missing_expected = [name for name in expected if not (root / name).is_dir()]
           files = sorted(p for p in root.rglob('*') if p.is_file())
           logs = [p for p in files if p.suffix.lower() == '.log']
           rules = {
@@ -736,6 +746,9 @@ jobs:
               'security_job_result': os.environ['SECURITY_JOB_RESULT'],
               'downloaded_files': len(files),
               'log_files_analyzed': len(logs),
+              'download_step_result': os.environ.get('DOWNLOAD_STEP_RESULT', 'unknown'),
+              'expected_artifacts': expected,
+              'missing_expected_artifacts': missing_expected,
               'matches_by_category': counts,
               'matched_lines': findings,
               'files': [{'path': str(p), 'size_bytes': p.stat().st_size} for p in files],
@@ -749,8 +762,16 @@ jobs:
               '- Flutter job: ' + data['flutter_job_result'],
               '- Security audit job: ' + data['security_job_result'],
               '- Downloaded report files: ' + str(len(files)),
-              '- Log files analyzed: ' + str(len(logs)), '',
-              '## Automated log analysis', '',
+              '- Log files analyzed: ' + str(len(logs)),
+              '- Artifact download step: ' + data['download_step_result'],
+              '- Missing expected per-job artifacts: ' + str(len(missing_expected)), '',
+              '## Artifact download validation', '',
+          ]
+          if missing_expected:
+              report.extend('MISSING REQUIRED ARTIFACT: ' + name for name in missing_expected)
+          else:
+              report.append('All expected per-job report artifacts were downloaded.')
+          report.extend(['', '## Automated log analysis', '',
               '| Category | Matching lines |', '|---|---:|'
           ]
           report.extend('| ' + key + ' | ' + str(value) + ' |' for key, value in counts.items())
@@ -771,6 +792,8 @@ jobs:
           Path('combined-reports/unified-report.md').write_text('\n'.join(report) + '\n')
           print('Downloaded ' + str(len(files)) + ' report files; analyzed ' + str(len(logs)) + ' logs.')
           print('Matches by category: ' + json.dumps(counts, sort_keys=True))
+          if missing_expected:
+              raise SystemExit('Expected per-job report artifacts are missing: ' + ', '.join(missing_expected))
           PY
 
       - name: Upload unified report and all per-job reports
