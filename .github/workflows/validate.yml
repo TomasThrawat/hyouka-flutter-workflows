@@ -26,3 +26,5 @@ jobs:
           cache: false
       - name: Run actionlint
         run: go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.11 -color
+      - name: Test reusable workflow contract and report scripts
+        run: python3 scripts/validate_workflow.py
