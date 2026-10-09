@@ -112,7 +112,8 @@ jobs:
           set -euo pipefail
           mkdir -p ci-reports
           test -f .git/HEAD
-          git ls-files -co --exclude-standard > ci-reports/source-file-list.txt
+          find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -printf '%P\n' \
+            | sort > ci-reports/source-file-list.txt
           find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -print0 \
             | sort -z | xargs -0 -r sha256sum > ci-reports/source-manifest.sha256
           tar --exclude='./.git' --exclude='./ci-reports' -czf "$RUNNER_TEMP/project-source-snapshot.tar.gz" .
@@ -362,8 +363,8 @@ jobs:
           if [[ "${{ inputs.target-platform }}" == "android-arm64" ]]; then
             ABIS="$(unzip -Z1 "$APK" | awk -F/ '$1 == "lib" && $2 != "" {print $2}' | sort -u | tr '\n' ' ' | xargs)"
             echo "Native ABIs in APK: ${ABIS:-none}"
-            if [[ -n "$ABIS" && "$ABIS" != "arm64-v8a" ]]; then
-              echo "::error::Expected only arm64-v8a native libraries but found: $ABIS"
+            if [[ "$ABIS" != "arm64-v8a" ]]; then
+              echo "::error::Expected exactly arm64-v8a native libraries; found: ${ABIS:-none}"
               exit 1
             fi
           fi
@@ -530,7 +531,8 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ci-reports
-          git ls-files -co --exclude-standard > ci-reports/source-file-list.txt
+          find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -printf '%P\n' \
+            | sort > ci-reports/source-file-list.txt
           find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -print0 \
             | sort -z | xargs -0 -r sha256sum > ci-reports/source-manifest.sha256
           tar --exclude='./.git' --exclude='./ci-reports' -czf "$RUNNER_TEMP/project-source-snapshot.tar.gz" .
