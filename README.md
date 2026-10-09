@@ -9,12 +9,14 @@ A central, reusable GitHub Actions setup for Flutter projects. It uses the Flutt
 - Optional headless Android emulator execution for existing `integration_test/*_test.dart` tests.
 - Gitleaks scanning of the repository's Git history and OSV-Scanner scanning of supported dependency lockfiles, including `pubspec.lock`. Flutter dependency graph/outdated reports are informational and never run an automatic upgrade.
 - A complete source snapshot and SHA-256 file manifest captured before analysis, dependency resolution, or APK inspection.
-- Build history cached between runs with comparison of check outcomes, APK SHA-256 hashes, and `pubspec.lock` SHA-256 hashes.
-- A unified report that combines the full command logs, dependency reports, coverage results, APK inventory, and build-history comparison. It downloads same-run artifacts through the GitHub CLI (avoiding the Node.js `DEP0005` warning from the artifact action), verifies expected per-job reports were downloaded, and fails with a diagnostic when one is missing. The caller grants `actions: read` only.
-- GitHub checkout initialization avoids the obsolete `master`-branch hint, and unified log analysis distinguishes Flutter's recurring duplicate-directory-watch message from application exceptions while preserving original logs.
+- Build history cached between runs compares check outcomes, APK SHA-256, lockfile hashes, APK size, overall coverage, elapsed duration, and new-warning counts.
+- A unified report combines command logs, dependency reports, coverage, APK inventory, change-impact reasoning, warning-regression output, and build-history comparisons. It verifies expected per-job artifacts and reports when one is missing.
+- GitHub checkout initialization avoids the obsolete master-branch hint. Log analysis classifies application/test errors, infrastructure signals, exceptions, warnings and info lints; deduplicates warning signatures to flag regressions; and preserves original logs. Pattern matches are signals, not proven root causes.
 - Detailed test coverage reports: total coverage, per-file coverage, and exact uncovered executable lines. Offline regression tests cover empty and full coverage, first-run and unchanged build-history baselines, required versus optional artifacts, log classification, high-volume log caps, and long-line truncation.
 - Golden/screenshot test comparison when tests use Flutter golden matchers and checked-in baseline images; baselines are never updated automatically.
-- Full APK archive integrity checks, complete entry listing, extracted-file hashes, signature verification, ABI validation, and APK SHA-256.
+- Full APK checks cover archive integrity, full entry listing, extracted-file hashes, signature, ABI, SHA-256, package/version/minimum-SDK metadata, permissions, largest entries, and optional size/forbidden-permission gates. An opt-in emulator smoke test installs and launches the APK and preserves screenshots, logcat and package/activity diagnostics on failure.
+- Opt-in diff-aware PR test selection. Pushes, manual/release runs and uncertain platform/configuration/source mappings use the complete suite. A configured coverage gate disables targeted selection. Documentation-only PRs can skip tests only when this option is explicitly enabled.
+- Optional signed artifact provenance links a verified APK to its repository, workflow and commit. It records origin and integrity claims; it does not prove the application is bug-free, and consumers must verify the attestation.
 - No automatic dependency upgrades, no silent source rewrites, and no automatic commits to the caller repository.
 
 ## Call it from a Flutter project
@@ -33,6 +35,7 @@ on:
 permissions:
   actions: read
   contents: read
+  pull-requests: read
 
 jobs:
   flutter-ci:
@@ -47,9 +50,17 @@ jobs:
       run-security-audit: true
       fail-on-security-findings: false
       artifact-name: my-app-arm64-apk
+      enable-targeted-pr-tests: false
+      run-apk-smoke-test: false
+      min-coverage-percent: 0
+      max-apk-size-mb: 0
+      max-apk-entry-size-mb: 0
+      forbid-permissions: ''
+      fail-on-new-warnings: false
+      generate-artifact-attestation: false
 ```
 
-For maximum supply-chain stability, pin the reusable workflow reference to a full commit SHA after reviewing that commit. The examples use the published `v1.1.8` release tag. For production supply-chain stability, pin to a reviewed full commit SHA.
+For maximum supply-chain stability, pin the reusable workflow reference to a reviewed full commit SHA. The examples use the v1.1.8 release tag. Enabling targeted PR selection requires the caller to grant pull-requests: read. Enabling artifact attestation additionally requires the reusable-call job to grant id-token: write and attestations: write; leave attestation off unless the repository is eligible.
 
 ## Audit existing custom builds without replacing them
 
@@ -104,10 +115,18 @@ With `fail-on-security-findings: false`, scanner findings are warnings and repor
 | `run-security-audit` | `true` | Enable secret and dependency scans |
 | `fail-on-security-findings` | `false` | Make findings fail the scanner steps |
 | `artifact-name` | `flutter-android-arm64-apk` | APK artifact name |
+| `enable-targeted-pr-tests` | `false` | Opt-in conservative PR-only targeted test selection; uncertain mappings run the full suite |
+| `run-apk-smoke-test` | `false` | Install and launch the APK on a headless emulator; upload diagnostics on failure |
+| `min-coverage-percent` | `0` | Optional minimum total line coverage; 0 disables the gate and targeted-test shortcut |
+| `max-apk-size-mb` | `0` | Optional maximum compressed APK size in MiB |
+| `max-apk-entry-size-mb` | `0` | Optional maximum expanded APK entry size in MiB |
+| `forbid-permissions` | `empty` | Optional Android permissions that must not appear in the APK |
+| `fail-on-new-warnings` | `false` | Fail when new normalized warning signatures appear after a prior baseline exists |
+| `generate-artifact-attestation` | `false` | Generate signed provenance for the verified APK (requires caller permissions and eligible repository) |
 
 ## Reports and baseline requirements
 
-Each run uploads a report artifact containing the full checked-out source snapshot, source file list, SHA-256 manifest, command logs, dependency audit, coverage summary/JSON/uncovered-line list, APK archive entry listing and integrity result (when built), and a comparison with the prior cached build. The APK itself is uploaded separately. Golden tests must be authored by the project and their expected images committed to source control; a generic workflow cannot safely invent app-specific screenshot expectations.
+Each run uploads the complete source snapshot and hashes, command logs, dependency audit, coverage summary/JSON/uncovered lines, APK metadata/permissions/largest entries, change-impact report, warning classifications/signatures, optional quality-gate report, and prior-run comparisons for checks, APK digest/size, coverage, duration and warnings.
 
 Dependency inspection does not upgrade package constraints: when a committed `pubspec.lock` exists, `flutter pub get --enforce-lockfile` enforces it; if no lockfile exists, `flutter pub get` resolves declared constraints without committing generated files. The workflow records the lockfile SHA-256 and compares it with the previous run. `flutter pub deps`, `flutter pub outdated`, Gitleaks, and OSV-Scanner produce reports. If an app has no committed `pubspec.lock`, the security job generates a runner-local lockfile only for OSV scanning and includes it in the report; it does not commit it. If no supported lockfile can be found or generated, the audit reports the scan as skipped with a warning. No package upgrade or source rewrite is performed automatically.
 

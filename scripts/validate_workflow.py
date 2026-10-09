@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
+import sys
 import tempfile
 import textwrap
 from pathlib import Path
@@ -52,12 +54,24 @@ required_contract = [
     "Caught exception: Already watching path:",
     "flutter-complete-report-",
     "fail-on-security-findings",
+    "enable-targeted-pr-tests",
+    "Determine changed files and select safe PR tests",
+    "Run Android install-and-launch smoke test",
+    "Generate APK metadata and enforce size and permission rules",
+    "Enforce configurable quality gates",
+    "Analyze warning regressions and classify build logs",
+    "generate-artifact-attestation",
+    "actions/attest@v4",
+    "run_duration_seconds",
+    "coverage_percent",
+    "apk_size_bytes",
+    "new_warning_count",
 ]
 for marker in required_contract:
     assert marker in source, f"Required workflow capability missing: {marker}"
 
 assert "actions/download-artifact@" not in source, "The unified reporter must avoid the Node-based artifact action that emits DEP0005"
-assert source.count('gh run download "$GITHUB_RUN_ID"') == 1, "The unified reporter must download current-run artifacts through GitHub CLI"
+assert source.count('gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --pattern') == 1, "The unified reporter must download current-run report artifacts through GitHub CLI"
 assert "GH_TOKEN: ${{ github.token }}" in source, "GitHub CLI must receive the workflow token explicitly"
 assert "actions: read" in source, "The report job needs only read access to Actions artifacts"
 assert "if [[ \"$EXPECT_FLUTTER_REPORT\" == \"true\" || \"$EXPECT_SECURITY_REPORT\" == \"true\" ]]" in source, "Skip download cleanly when both report-producing jobs are disabled"
@@ -303,6 +317,9 @@ with tempfile.TemporaryDirectory(prefix="hyouka-ci-contract-") as temp:
         assert stress_data["missing_expected_artifacts"] == []
     finally:
         os.chdir(old_cwd)
+
+helper_tests = subprocess.run([sys.executable, str(ROOT / "scripts" / "test_ci_enhancements.py")], check=False)
+assert helper_tests.returncode == 0, "CI enhancement helper regression suite failed"
 
 print("PASS: central workflow contract markers and safe no-auto-update rules")
 print(f"PASS: compiled {len(blocks)} embedded Python scripts")

@@ -88,6 +88,46 @@ on:
         type: string
         required: false
         default: flutter-android-arm64-apk
+      enable-targeted-pr-tests:
+        description: Opt-in conservative test selection for pull requests only; all other runs use the full suite.
+        type: boolean
+        required: false
+        default: false
+      run-apk-smoke-test:
+        description: Install and launch the APK on a headless Android emulator and capture failure diagnostics.
+        type: boolean
+        required: false
+        default: false
+      min-coverage-percent:
+        description: Optional minimum overall line coverage percent; 0 disables this gate.
+        type: number
+        required: false
+        default: 0
+      max-apk-size-mb:
+        description: Optional maximum compressed APK size in MiB; 0 disables this gate.
+        type: number
+        required: false
+        default: 0
+      max-apk-entry-size-mb:
+        description: Optional maximum expanded size of a single APK entry in MiB; 0 disables this gate.
+        type: number
+        required: false
+        default: 0
+      forbid-permissions:
+        description: Optional comma- or newline-separated Android permissions forbidden in the built APK.
+        type: string
+        required: false
+        default: ''
+      fail-on-new-warnings:
+        description: Fail if a warning signature appears that is absent from the cached previous-run baseline.
+        type: boolean
+        required: false
+        default: false
+      generate-artifact-attestation:
+        description: Generate signed GitHub artifact provenance for the verified APK; requires caller permissions and eligible repository.
+        type: boolean
+        required: false
+        default: false
 
 env:
   GIT_CONFIG_COUNT: 2
@@ -106,6 +146,7 @@ jobs:
     timeout-minutes: 45
     permissions:
       contents: read
+      pull-requests: read
     steps:
       - name: Checkout project
         uses: actions/checkout@v7
@@ -118,6 +159,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p ci-reports
+          date +%s > ci-reports/run-start-epoch.txt
           test -f .git/HEAD
           find . -path './.git' -prune -o -path './ci-reports' -prune -o -type f -printf '%P\n' \
             | sort > ci-reports/source-file-list.txt
@@ -232,18 +274,64 @@ jobs:
           fi
           dart format --output=none --set-exit-if-changed "${paths[@]}" 2>&1 | tee ci-reports/dart-format.log
 
+      - name: Determine changed files and select safe PR tests
+        id: impact
+        if: ${{ inputs.enable-targeted-pr-tests && inputs.run-tests }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MIN_COVERAGE_PERCENT: ${{ inputs.min-coverage-percent }}
+        run: |
+          set -euo pipefail
+          mkdir -p ci-reports
+          : > ci-reports/changed-files.txt
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" && -n "$PR_NUMBER" ]]; then
+            if ! gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files" --jq '.[].filename' > ci-reports/changed-files.txt; then
+              echo "::warning::Could not retrieve pull-request file changes; selecting the complete test suite."
+              : > ci-reports/changed-files.txt
+            fi
+          else
+            echo "Not a pull request or no PR number; full suite will be selected."
+          fi
+          python3 scripts/ci_enhancements.py impact --event "$GITHUB_EVENT_NAME" \
+            --changed-file ci-reports/changed-files.txt --output-dir ci-reports \
+            --min-coverage "$MIN_COVERAGE_PERCENT" --targeted-tests
+
       - name: Run unit and widget tests
         id: tests
         if: ${{ inputs.run-tests }}
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -d test ]] && find test -type f -name '*_test.dart' -print -quit | grep -q .; then
-            set -o pipefail
-            flutter test --coverage 2>&1 | tee ci-reports/flutter-test.log
-          else
+          if [[ ! -d test ]] || ! find test -type f -name '*_test.dart' -print -quit | grep -q .; then
             echo "No Dart test files found under test/; unit/widget tests skipped." | tee ci-reports/flutter-test.log
+            exit 0
           fi
+          if [[ "${{ inputs.enable-targeted-pr-tests }}" == "true" && "$GITHUB_EVENT_NAME" == "pull_request" && -s ci-reports/change-impact.json ]]; then
+            mode="$(jq -r '.mode // "full"' ci-reports/change-impact.json)"
+            case "$mode" in
+              skip)
+                echo "Documentation-only pull request; Flutter tests skipped by conservative change-impact analysis." | tee ci-reports/flutter-test.log
+                exit 0
+                ;;
+              targeted)
+                mapfile -t files < <(jq -r '.target_tests[]?' ci-reports/change-impact.json)
+                if (( ${#files[@]} > 0 )); then
+                  printf 'Running mapped tests only: %s\n' "${files[*]}" | tee ci-reports/flutter-test.log
+                  set -o pipefail
+                  flutter test --coverage "${files[@]}" 2>&1 | tee -a ci-reports/flutter-test.log
+                  exit 0
+                fi
+                echo "No safe targeted tests selected; falling back to the complete suite." | tee ci-reports/flutter-test.log
+                ;;
+              *)
+                echo "Change impact requires the full suite: $(jq -r '.reason' ci-reports/change-impact.json)" | tee ci-reports/flutter-test.log
+                ;;
+            esac
+          fi
+          set -o pipefail
+          flutter test --coverage 2>&1 | tee ci-reports/flutter-test.log
 
       - name: Compare screenshot and golden baselines
         id: screenshot-tests
@@ -421,6 +509,83 @@ jobs:
 
           sha256sum "$APK" | tee ci-reports/apk-sha256.txt
 
+      - name: Generate APK metadata and enforce size and permission rules
+        id: apk-audit
+        if: ${{ inputs.build-apk && always() && steps.verify-apk.outcome == 'success' }}
+        shell: bash
+        env:
+          TARGET_PLATFORM: ${{ inputs.target-platform }}
+          MAX_APK_ENTRY_SIZE_MB: ${{ inputs.max-apk-entry-size-mb }}
+          FORBID_PERMISSIONS: ${{ inputs.forbid-permissions }}
+        run: |
+          set -euo pipefail
+          APK="build/app/outputs/flutter-apk/app-release.apk"
+          BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)"
+          AAPT="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" > ci-reports/apk-badging.txt
+          case "$TARGET_PLATFORM" in
+            android-arm64) EXPECTED_ABI="arm64-v8a" ;;
+            android-arm) EXPECTED_ABI="armeabi-v7a" ;;
+            android-x64) EXPECTED_ABI="x86_64" ;;
+            android-riscv64) EXPECTED_ABI="riscv64" ;;
+            *) echo "::error::Unsupported target platform during APK audit: $TARGET_PLATFORM"; exit 1 ;;
+          esac
+          python3 scripts/ci_enhancements.py apk-audit \
+            --apk "$APK" --badging ci-reports/apk-badging.txt \
+            --expected-abi "$EXPECTED_ABI" --max-entry-size-mb "$MAX_APK_ENTRY_SIZE_MB" \
+            --forbid-permissions "$FORBID_PERMISSIONS" --output-dir ci-reports
+
+      - name: Run Android install-and-launch smoke test
+        id: apk-smoke
+        if: ${{ inputs.run-apk-smoke-test && inputs.build-apk && steps.verify-apk.outcome == 'success' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: ${{ inputs.emulator-api-level }}
+          arch: x86_64
+          target: default
+          profile: pixel_2
+          emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -no-metrics
+          script: |
+            set -euo pipefail
+            APK="$GITHUB_WORKSPACE/build/app/outputs/flutter-apk/app-release.apk"
+            DIAG="$GITHUB_WORKSPACE/ci-reports/emulator-smoke"
+            mkdir -p "$DIAG"
+            capture_failure() {
+              result=$?
+              if (( result != 0 )); then
+                adb logcat -d > "$DIAG/logcat-on-failure.txt" 2>&1 || true
+                adb shell dumpsys activity activities > "$DIAG/activities-on-failure.txt" 2>&1 || true
+                adb shell dumpsys package > "$DIAG/packages-on-failure.txt" 2>&1 || true
+                adb shell screencap -p /sdcard/hyouka-smoke-failure.png >/dev/null 2>&1 || true
+                adb pull /sdcard/hyouka-smoke-failure.png "$DIAG/screenshot-on-failure.png" >/dev/null 2>&1 || true
+                echo "APK smoke test failed with exit code $result; diagnostics captured."
+              fi
+              exit "$result"
+            }
+            trap capture_failure EXIT
+            BUILD_TOOLS_VERSION="$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' | sort -V | tail -n1)"
+            AAPT="$ANDROID_HOME/build-tools/$BUILD_TOOLS_VERSION/aapt"
+            "$AAPT" dump badging "$APK" > "$DIAG/apk-badging.txt"
+            APP_ID="$(sed -n "s/^package: name='\([^']*\)'.*/\1/p" "$DIAG/apk-badging.txt" | head -n1)"
+            ACTIVITY="$(sed -n "s/^launchable-activity: name='\([^']*\)'.*/\1/p" "$DIAG/apk-badging.txt" | head -n1)"
+            test -n "$APP_ID" || { echo "::error::Could not determine the APK application ID."; exit 1; }
+            adb logcat -c
+            adb install -r "$APK"
+            if [[ -n "$ACTIVITY" ]]; then
+              adb shell am start -W -n "$APP_ID/$ACTIVITY"
+            else
+              adb shell monkey -p "$APP_ID" -c android.intent.category.LAUNCHER 1
+            fi
+            sleep 5
+            adb shell pidof "$APP_ID" > "$DIAG/application-pid.txt" || { echo "::error::APK application process did not stay alive after launch."; exit 1; }
+            adb shell screencap -p /sdcard/hyouka-smoke-success.png
+            adb pull /sdcard/hyouka-smoke-success.png "$DIAG/screenshot-after-launch.png"
+            adb shell dumpsys package "$APP_ID" > "$DIAG/application-package.txt"
+            adb logcat -d -t 2000 > "$DIAG/logcat-after-launch.txt"
+            echo "Installed and launched $APP_ID successfully." | tee "$DIAG/result.txt"
+            trap - EXIT
+
       - name: Upload APK
         if: ${{ inputs.build-apk && always() && steps.verify-apk.outcome == 'success' }}
         uses: actions/upload-artifact@v7
@@ -437,6 +602,31 @@ jobs:
           mkdir -p ci-reports
           adb logcat -d > ci-reports/android-logcat.txt 2>&1 || true
           adb shell dumpsys meminfo > ci-reports/android-meminfo.txt 2>&1 || true
+
+      - name: Analyze warning regressions and classify build logs
+        id: warning-analysis
+        if: ${{ always() && steps.source-snapshot.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/ci_enhancements.py analyze-logs \
+            --log-root ci-reports --baseline .ci-history/warning-signatures.json --output-dir ci-reports
+
+      - name: Enforce configurable quality gates
+        id: quality-gates
+        if: ${{ always() && steps.source-snapshot.outcome == 'success' && (inputs.min-coverage-percent > 0 || inputs.max-apk-size-mb > 0 || inputs.fail-on-new-warnings) }}
+        shell: bash
+        env:
+          MIN_COVERAGE: ${{ inputs.min-coverage-percent }}
+          MAX_APK_SIZE: ${{ inputs.max-apk-size-mb }}
+          FAIL_ON_NEW_WARNINGS: ${{ inputs.fail-on-new-warnings }}
+        run: |
+          set -euo pipefail
+          args=(quality --coverage-json ci-reports/coverage.json --apk build/app/outputs/flutter-apk/app-release.apk \
+            --log-analysis ci-reports/log-analysis.json --min-coverage "$MIN_COVERAGE" \
+            --max-apk-size "$MAX_APK_SIZE" --output-dir ci-reports)
+          if [[ "$FAIL_ON_NEW_WARNINGS" == "true" ]]; then args+=(--fail-on-new-warnings); fi
+          python3 scripts/ci_enhancements.py "${args[@]}"
 
       - name: Collect full command logs and compare build history
         id: report-collector
@@ -456,9 +646,21 @@ jobs:
           set -euo pipefail
           mkdir -p ci-reports .ci-history
           apk_hash=""
+          apk_size_bytes=0
           lock_hash=""
+          coverage_pct=""
+          warning_count=0
+          run_duration_seconds=0
           [[ ! -f build/app/outputs/flutter-apk/app-release.apk ]] || apk_hash="$(sha256sum build/app/outputs/flutter-apk/app-release.apk | awk '{print $1}')"
+          [[ ! -f build/app/outputs/flutter-apk/app-release.apk ]] || apk_size_bytes="$(stat -c %s build/app/outputs/flutter-apk/app-release.apk)"
           [[ ! -s pubspec.lock ]] || lock_hash="$(sha256sum pubspec.lock | awk '{print $1}')"
+          [[ ! -s ci-reports/coverage.json ]] || coverage_pct="$(jq -r '.coverage_percent // empty' ci-reports/coverage.json)"
+          [[ ! -s ci-reports/log-analysis.json ]] || warning_count="$(jq -r '.new_warning_count // 0' ci-reports/log-analysis.json)"
+          if [[ -s ci-reports/run-start-epoch.txt ]]; then
+            start_epoch="$(cat ci-reports/run-start-epoch.txt)"
+            now_epoch="$(date +%s)"
+            if [[ "$start_epoch" =~ ^[0-9]+$ ]] && (( now_epoch >= start_epoch )); then run_duration_seconds=$((now_epoch-start_epoch)); fi
+          fi
           printf 'pubspec.lock SHA-256: %s\n' "${lock_hash:-not available}" | tee ci-reports/pubspec-lock-sha256.txt
           jq -cn \
             --arg repo "$GITHUB_REPOSITORY" --arg ref "$GITHUB_REF_NAME" --arg sha "$GITHUB_SHA" \
@@ -468,7 +670,9 @@ jobs:
             --arg screenshots "$SCREENSHOT_RESULT" --arg coverage "$COVERAGE_RESULT" \
             --arg format "$FORMAT_RESULT" --arg emulator "$EMULATOR_RESULT" \
             --arg build "$BUILD_RESULT" --arg verify "$APK_RESULT" --arg apk_hash "$apk_hash" --arg lock_hash "$lock_hash" \
-            '{repository:$repo,ref:$ref,commit:$sha,run_id:$run,attempt:$attempt,date:$date,pub_get:$pub,analyze:$analyze,tests:$tests,screenshot_tests:$screenshots,coverage:$coverage,format:$format,emulator:$emulator,build:$build,apk_verify:$verify,apk_sha256:$apk_hash,pubspec_lock_sha256:$lock_hash}' \
+            --arg coverage_pct "$coverage_pct" --argjson apk_size_bytes "$apk_size_bytes" \
+            --argjson run_duration_seconds "$run_duration_seconds" --argjson warning_count "$warning_count" \
+            '{repository:$repo,ref:$ref,commit:$sha,run_id:$run,attempt:$attempt,date:$date,pub_get:$pub,analyze:$analyze,tests:$tests,screenshot_tests:$screenshots,coverage:$coverage,format:$format,emulator:$emulator,build:$build,apk_verify:$verify,apk_sha256:$apk_hash,pubspec_lock_sha256:$lock_hash,coverage_percent:(if $coverage_pct=="" then null else ($coverage_pct|tonumber) end),apk_size_bytes:$apk_size_bytes,run_duration_seconds:$run_duration_seconds,new_warning_count:$warning_count}' \
             >> .ci-history/history.jsonl
           cp .ci-history/history.jsonl ci-reports/build-history.jsonl
           python3 - <<'PY'
@@ -488,7 +692,18 @@ jobs:
                         f"- APK hash changed: {'yes' if prev.get('apk_sha256')!=cur.get('apk_sha256') else 'no'}",
                         f"- Previous pubspec.lock SHA-256: {prev.get('pubspec_lock_sha256') or 'not available'}",
                         f"- Current pubspec.lock SHA-256: {cur.get('pubspec_lock_sha256') or 'not available'}",
-                        f"- Dependency lock hash changed: {'yes' if prev.get('pubspec_lock_sha256')!=cur.get('pubspec_lock_sha256') else 'no'}"]
+                        f"- Dependency lock hash changed: {'yes' if prev.get('pubspec_lock_sha256')!=cur.get('pubspec_lock_sha256') else 'no'}",
+                        f"- Previous APK size: {prev.get('apk_size_bytes') or 'not built'} bytes",
+                        f"- Current APK size: {cur.get('apk_size_bytes') or 'not built'} bytes",
+                        f"- APK size delta: {(cur.get('apk_size_bytes') - prev.get('apk_size_bytes')) if cur.get('apk_size_bytes') is not None and prev.get('apk_size_bytes') is not None else 'not available'} bytes",
+                        f"- Previous coverage: {prev.get('coverage_percent') if prev.get('coverage_percent') is not None else 'not available'}%",
+                        f"- Current coverage: {cur.get('coverage_percent') if cur.get('coverage_percent') is not None else 'not available'}%",
+                        f"- Coverage delta: {((cur.get('coverage_percent') or 0)-(prev.get('coverage_percent') or 0)):.2f} percentage points" if cur.get('coverage_percent') is not None and prev.get('coverage_percent') is not None else "- Coverage delta: not available",
+                        f"- Previous run duration: {prev.get('run_duration_seconds', 'unknown')} seconds",
+                        f"- Current run duration: {cur.get('run_duration_seconds', 'unknown')} seconds",
+                        f"- Duration delta: {(cur.get('run_duration_seconds') - prev.get('run_duration_seconds')) if cur.get('run_duration_seconds') is not None and prev.get('run_duration_seconds') is not None else 'not available'} seconds",
+                        f"- Previous new warning signatures: {prev.get('new_warning_count', 'unknown')}",
+                        f"- Current new warning signatures: {cur.get('new_warning_count', 'unknown')}"]
           else: lines += ["","No previous cache baseline was available; this run establishes it."]
           Path("ci-reports/build-history-comparison.md").write_text("\n".join(lines)+"\n")
           PY
@@ -500,6 +715,10 @@ jobs:
             echo "Source SHA-256: ci-reports/source-manifest.sha256"
             echo "APK inventory and integrity: ci-reports/apk-contents.txt and ci-reports/apk-archive-integrity.log"
             echo "Build comparison: ci-reports/build-history-comparison.md"
+             echo "Change impact: ci-reports/change-impact.md"
+             echo "Warning analysis: ci-reports/log-analysis.md"
+             echo "APK metadata audit: ci-reports/apk-audit.md"
+             echo "Quality gates: ci-reports/quality-gates.md"
             echo
             for f in ci-reports/*.log; do
               [[ -f "$f" ]] || continue
@@ -517,6 +736,16 @@ jobs:
             done
           } > ci-reports/unified-report.md
           cat ci-reports/build-history-comparison.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update warning baseline only after passing checks
+        if: ${{ success() && steps.report-collector.outcome == 'success' && steps.warning-analysis.outcome == 'success' && steps.quality-gates.outcome != 'failure' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -s ci-reports/warning-signatures.json ]]; then
+            mkdir -p .ci-history
+            cp ci-reports/warning-signatures.json .ci-history/warning-signatures.json
+          fi
 
       - name: Save build history for the next run
         if: ${{ always() && steps.report-collector.outcome == 'success' }}
@@ -550,6 +779,10 @@ jobs:
           EMULATOR_RESULT: ${{ steps.emulator.outcome }}
           SCREENSHOT_RESULT: ${{ steps.screenshot-tests.outcome }}
           COVERAGE_RESULT: ${{ steps.coverage-report.outcome }}
+          APK_AUDIT_RESULT: ${{ steps.apk-audit.outcome }}
+          APK_SMOKE_RESULT: ${{ steps.apk-smoke.outcome }}
+          QUALITY_RESULT: ${{ steps.quality-gates.outcome }}
+          WARNING_RESULT: ${{ steps.warning-analysis.outcome }}
         run: |
           {
             echo "## Shared Flutter CI"
@@ -564,6 +797,10 @@ jobs:
             echo "| Android emulator | ${EMULATOR_RESULT:-not requested} |"
             echo "| APK build | ${BUILD_RESULT:-not requested} |"
             echo "| APK verification | ${APK_RESULT:-not requested} |"
+            echo "| APK metadata audit | ${APK_AUDIT_RESULT:-not requested} |"
+            echo "| APK install/launch smoke | ${APK_SMOKE_RESULT:-not requested} |"
+            echo "| Configurable quality gates | ${QUALITY_RESULT:-not requested} |"
+            echo "| Warning analysis | ${WARNING_RESULT:-not requested} |"
             echo
             echo "Full command logs and reports are available in the workflow logs and uploaded artifacts."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -733,6 +970,50 @@ jobs:
           path: ci-reports/**
           if-no-files-found: warn
           retention-days: 14
+
+  attest-apk:
+    name: Attest verified APK provenance
+    if: ${{ inputs.generate-artifact-attestation && inputs.build-apk && needs.flutter.result == 'success' }}
+    needs: [flutter]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download the verified APK from this run
+        id: apk
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_ARTIFACT_NAME: ${{ inputs.artifact-name }}
+        run: |
+          set -euo pipefail
+          DEST="$RUNNER_TEMP/attest-apk"
+          mkdir -p "$DEST"
+          gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$APK_ARTIFACT_NAME" --dir "$DEST"
+          APK_PATH="$(find "$DEST" -type f -name '*.apk' -print -quit)"
+          test -n "$APK_PATH" && test -s "$APK_PATH"
+          echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
+          echo "Verified APK fetched from current workflow run." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Generate signed build provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: ${{ steps.apk.outputs.path }}
+
+      - name: Document attestation scope
+        shell: bash
+        run: |
+          {
+            echo "## APK provenance attestation"
+            echo "- Subject: verified release APK uploaded by this workflow run."
+            echo "- Provenance links the repository, workflow, commit and event."
+            echo "- An attestation proves origin/integrity claims, not absence of bugs."
+            echo "Verify the subject with GitHub CLI: gh attestation verify --repo <CALLER_REPOSITORY> <APK_PATH>"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   unified-report:
     name: Collect all per-job reports and analyze logs
