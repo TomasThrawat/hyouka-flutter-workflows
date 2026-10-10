@@ -599,9 +599,19 @@ jobs:
         if: ${{ failure() }}
         shell: bash
         run: |
+          set +e
           mkdir -p ci-reports
-          adb logcat -d > ci-reports/android-logcat.txt 2>&1 || true
-          adb shell dumpsys meminfo > ci-reports/android-meminfo.txt 2>&1 || true
+          timeout 12s adb logcat -d > ci-reports/android-logcat.txt 2>&1
+          logcat_status=$?
+          if (( logcat_status != 0 )); then
+            echo "adb logcat failed or timed out (exit $logcat_status)." >> ci-reports/android-logcat.txt
+          fi
+          timeout 12s adb shell dumpsys meminfo > ci-reports/android-meminfo.txt 2>&1
+          meminfo_status=$?
+          if (( meminfo_status != 0 )); then
+            echo "adb dumpsys meminfo failed or timed out (exit $meminfo_status)." >> ci-reports/android-meminfo.txt
+          fi
+          exit 0
 
       - name: Analyze warning regressions and classify build logs
         id: warning-analysis
