@@ -180,10 +180,10 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: .ci-history
-          key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ inputs.target-platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
-            flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-
-            flutter-build-history-${{ github.repository_id }}-${{ github.event.repository.default_branch }}-
+            flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ inputs.target-platform }}-
+            flutter-build-history-${{ github.repository_id }}-${{ github.event.repository.default_branch }}-${{ inputs.target-platform }}-
 
       - name: Verify Flutter project
         shell: bash
@@ -741,7 +741,7 @@ jobs:
         uses: actions/cache/save@v5
         with:
           path: .ci-history
-          key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ github.run_id }}-${{ github.run_attempt }}
+          key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ inputs.target-platform }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Upload Flutter reports and diagnostics
         if: ${{ always() }}
