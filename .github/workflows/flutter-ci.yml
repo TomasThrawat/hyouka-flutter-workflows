@@ -536,6 +536,21 @@ jobs:
             --expected-abi "$EXPECTED_ABI" --max-entry-size-mb "$MAX_APK_ENTRY_SIZE_MB" \
             --forbid-permissions "$FORBID_PERMISSIONS" --output-dir ci-reports
 
+      - name: Enable KVM for Android emulator smoke test
+        if: ${{ inputs.run-apk-smoke-test && inputs.build-apk && steps.verify-apk.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -e /dev/kvm ]]; then
+            echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+            sudo udevadm control --reload-rules
+            sudo udevadm trigger --name-match=kvm
+            ls -l /dev/kvm
+            test -r /dev/kvm && test -w /dev/kvm
+          else
+            echo "::warning::/dev/kvm is unavailable on this runner; emulator smoke test may not boot without VM acceleration."
+          fi
+
       - name: Run Android install-and-launch smoke test
         id: apk-smoke
         if: ${{ inputs.run-apk-smoke-test && inputs.build-apk && steps.verify-apk.outcome == 'success' }}
@@ -543,8 +558,10 @@ jobs:
         with:
           api-level: ${{ inputs.emulator-api-level }}
           arch: x86_64
-          target: default
+          target: google_apis
           profile: pixel_2
+          disable-linux-hw-accel: false
+          emulator-boot-timeout: 600
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -no-metrics
           script: |
             set -euo pipefail
