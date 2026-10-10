@@ -564,7 +564,7 @@ jobs:
           emulator-boot-timeout: 600
           emulator-options: -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect -no-snapshot -no-metrics
           script: |
-            set -euo pipefail
+            set -eu
             APK="$GITHUB_WORKSPACE/build/app/outputs/flutter-apk/app-release.apk"
             DIAG="$GITHUB_WORKSPACE/ci-reports/emulator-smoke"
             mkdir -p "$DIAG"
