@@ -182,8 +182,11 @@ jobs:
           path: .ci-history
           key: flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ inputs.target-platform }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
+            # Prefer history saved by the same ABI, then fall back to pre-migration caches.
             flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-${{ inputs.target-platform }}-
             flutter-build-history-${{ github.repository_id }}-${{ github.event.repository.default_branch }}-${{ inputs.target-platform }}-
+            flutter-build-history-${{ github.repository_id }}-${{ github.ref_name }}-
+            flutter-build-history-${{ github.repository_id }}-${{ github.event.repository.default_branch }}-
 
       - name: Verify Flutter project
         shell: bash
