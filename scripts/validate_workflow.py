@@ -39,6 +39,8 @@ required_contract = [
     "Verify APK, signature, and ABI",
     "Collect full command logs and compare build history",
     "Resolve missing Flutter lockfile for audit without committing changes",
+    "Apply caller-specific Android setup",
+    "android-setup-script",
     "flutter pub get --enforce-lockfile",
     "pubspec_lock_sha256",
     "Dependency lock hash changed",
@@ -79,6 +81,7 @@ for marker in ("GIT_CONFIG_COUNT: 2", "GIT_CONFIG_VALUE_0: main", "GIT_CONFIG_VA
     assert marker in validation_source, f"Validation workflow must suppress the obsolete Git default-branch hint: {marker}"
 
 assert source.index("Snapshot the complete project before inspection") < source.index("Get dependencies")
+assert source.index("Generate Android files when explicitly requested") < source.index("Apply caller-specific Android setup") < source.index("Get dependencies"), "Caller-specific Android setup must run after Android generation and before dependency resolution"
 assert source.index("Get dependencies") < source.index("Refresh Android plugin registration after dependency resolution") < source.index("Build Android release APK"), "Android plugin config must refresh after dependency resolution and before the APK build"
 assert "actions/cache/restore@v4" not in source, "Cache restore must use the Node 24-compatible v5 action"
 assert "actions/cache/save@v4" not in source, "Cache save must use the Node 24-compatible v5 action"

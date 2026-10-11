@@ -63,6 +63,11 @@ on:
         type: string
         required: false
         default: com.example
+      android-setup-script:
+        description: Optional Python script path in the caller repository to configure its generated Android project before dependency resolution.
+        type: string
+        required: false
+        default: ''
       run-emulator-tests:
         description: Run integration_test/ on a headless Android emulator.
         type: boolean
@@ -220,6 +225,19 @@ jobs:
           else
             echo "android/ already exists; leaving native project files unchanged."
           fi
+
+      - name: Apply caller-specific Android setup
+        if: ${{ inputs.build-apk && inputs.android-setup-script != '' && !cancelled() }}
+        shell: bash
+        env:
+          ANDROID_SETUP_SCRIPT: ${{ inputs.android-setup-script }}
+        run: |
+          set -euo pipefail
+          test -f "$ANDROID_SETUP_SCRIPT" || {
+            echo "::error::Android setup script was not found: $ANDROID_SETUP_SCRIPT"
+            exit 1
+          }
+          python3 "$ANDROID_SETUP_SCRIPT"
 
       - name: Get dependencies
         id: pub-get

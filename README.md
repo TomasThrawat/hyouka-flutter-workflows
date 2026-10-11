@@ -62,6 +62,8 @@ jobs:
 
 The examples pin commit [92cded954be5653a48fada29e926e4a3e4f402b7](https://github.com/TomasThrawat/hyouka-flutter-workflows/commit/92cded954be5653a48fada29e926e4a3e4f402b7), which contains the new inputs. The older v1.1.8 tag does not include these features. Review and update the full commit SHA when choosing a newer revision. Enabling targeted PR selection requires the caller to grant pull-requests: read. Enabling artifact attestation additionally requires the reusable-call job to grant id-token: write and attestations: write; leave attestation off unless the repository is eligible.
 
+For apps that generate Android project files in CI and then inject a custom native bridge, set `generate-android: true`, provide `android-project-name` and `android-organization`, and set `android-setup-script` to a Python script path in the caller repository (for example, `scripts/configure_android.py`). The shared workflow runs that script after `flutter create` and before `flutter pub get`. The script stays in the caller repository; the reusable workflow does not commit generated or customized files.
+
 ## Audit existing custom builds without replacing them
 
 Projects with special Android setup, release signing, OAuth configuration, native patches, or custom packaging should keep those existing build workflows until they are intentionally migrated. To add only the security audit, use this caller configuration:
@@ -110,6 +112,7 @@ With `fail-on-security-findings: false`, scanner findings are warnings and repor
 | `generate-android` | `false` | Generate `android/` only if absent |
 | `android-project-name` | `app` | Used only during explicit Android generation |
 | `android-organization` | `com.example` | Used only during explicit Android generation |
+| `android-setup-script` | empty | Optional caller-repository Python script to customize the Android project after generation and before dependency resolution; useful for native bridges and custom providers |
 | `run-emulator-tests` | `false` | Run existing instrumentation/integration tests on an emulator |
 | `emulator-api-level` | `35` | Android emulator API level |
 | `run-security-audit` | `true` | Enable secret and dependency scans |
